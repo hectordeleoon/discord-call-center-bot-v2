@@ -28,7 +28,12 @@ const {
 // ===============================
 
 const CONFIG = {
-  TOKEN: process.env.DISCORD_BOT_TOKEN
+  TOKEN: process.env.DISCORD_BOT_TOKEN,
+  STAFF_AVAILABLE_CHANNEL_ID: process.env.STAFF_AVAILABLE_CHANNEL_ID,
+  STAFF_BUSY_CHANNEL_ID: process.env.STAFF_BUSY_CHANNEL_ID,
+  WAITING_CHANNEL_ID: process.env.WAITING_CHANNEL_ID
+};
+
 };
 
 client.login(CONFIG.TOKEN);
