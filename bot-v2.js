@@ -38,7 +38,7 @@ const CONFIG = {
   STAFF_AVAILABLE_CHANNEL_ID: process.env.STAFF_AVAILABLE_CHANNEL_ID,
   STAFF_BUSY_CHANNEL_ID: process.env.STAFF_BUSY_CHANNEL_ID,
   STAFF_TEXT_CHANNEL_ID: process.env.STAFF_TEXT_CHANNEL_ID,
-  REVIEW_CHANNEL_ID: "1423880600422711377", // Canal de reseñas
+  REVIEW_CHANNEL_ID: "1423880600422711377",
 
   SUPPORT_CHANNELS: process.env.SUPPORT_CHANNELS?.split(',').map(id => id.trim()) || [],
 
@@ -47,21 +47,24 @@ const CONFIG = {
   DONATOR_ROLES: process.env.DONATOR_ROLES?.split(',').map(id => id.trim()) || [],
 
   AUDIO_FILES: {
-    WELCOME_MUSIC: "./musica_espera.mp3",        // Música de bienvenida
-    VOICE_WAITING: "./voz_atendiendo.mp3",       // Voz normal: "Estamos atendiendo..."
-    VOICE_NO_STAFF: "./voz_no_disponible.mp3",   // Voz sin staff
-    VOICE_VIP: "./voz_vip.mp3"                   // Voz VIP/Donador
+    WELCOME_MUSIC: "./musica_espera.mp3",
+    VOICE_WAITING: "./voz_atendiendo.mp3",
+    VOICE_NO_STAFF: "./voz_no_disponible.mp3",
+    VOICE_VIP: "./voz_vip.mp3"
   },
 
-  WELCOME_MUSIC_DURATION: 15000,      // 15 segundos de música de bienvenida
-  INITIAL_MUSIC_DURATION: 30000,      // 30 segundos de música entre voces
-  MUSIC_INCREMENT: 5000,               // Incremento de 5 segundos
-  VOICE_OVERLAP_BUFFER: 1500,         // Buffer para evitar cortes (1.5 segundos)
+  // 🎯 CONFIGURACIÓN OPTIMIZADA TIPO CALL CENTER PROFESIONAL
+  MUSIC_INTRO: 8000,                  // 8 segundos música de bienvenida
+  MUSIC_BETWEEN_VOICES: 15000,        // 15 segundos música entre voces
+  MUSIC_CYCLE_BASE: 25000,            // 25 segundos base para ciclos
+  MUSIC_CYCLE_INCREMENT: 8000,        // Incremento de 8 segundos
+  MAX_MUSIC_DURATION: 50000,          // Máximo 50 segundos de música
+  TRANSITION_BUFFER: 600,             // 0.6 segundos de buffer
   
   TIME_BEFORE_ASSIGN: 5000,
   QUEUE_UPDATE_INTERVAL: 10000,
-  NO_STAFF_WARNING_TIME: 180000,      // 3 minutos sin atención
-  STAFF_UNAVAILABLE_WARNING_TIME: 1800000, // 30 minutos en no disponible
+  NO_STAFF_WARNING_TIME: 180000,
+  STAFF_UNAVAILABLE_WARNING_TIME: 1800000,
 
   AVERAGE_SUPPORT_TIME: 3
 };
@@ -71,29 +74,20 @@ const CONFIG = {
 // ===============================
 
 const botState = {
-  // Audio - Sistema mejorado con secuencia
   activeConnections: new Map(),
-  audioSequences: new Map(),        // Secuencias de audio por canal
-  currentPlayers: new Map(),        // Reproductor actual
+  currentPlayers: new Map(),
+  audioSequences: new Map(),
   audioTimers: new Map(),
-  musicCycles: new Map(),
-  isFirstPlay: new Map(),           // Para controlar reproducción inicial
+  cycleCounters: new Map(),
   
-  // Cola de soporte
   queue: [],
-  
-  // Usuarios siendo atendidos
   activeSupport: new Map(),
-  
-  // Mensajes DM
   userDMMessages: new Map(),
   
-  // Staff
   lastStaffNotification: null,
   staffUnavailableTimers: new Map(),
   noStaffWarnings: new Map(),
   
-  // Sistema de evaluación
   pendingReviews: new Map()
 };
 
@@ -116,7 +110,7 @@ const client = new Client({
 // ===============================
 
 const app = express();
-app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V3.3 OPTIMIZADO"));
+app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V4.0 ULTRA PROFESIONAL"));
 app.listen(3000, () => console.log("🌐 Web activa en puerto 3000"));
 
 // ===============================
@@ -183,6 +177,10 @@ function generateTicketId() {
   const day = String(date.getDate()).padStart(2, '0');
   const random = Math.random().toString(36).substr(2, 6).toUpperCase();
   return `PATIO-${year}${month}${day}-${random}`;
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ===============================
@@ -355,7 +353,7 @@ async function updateAllQueueMessages() {
 }
 
 // ===============================
-// SISTEMA DE EVALUACIÓN (CORREGIDO)
+// SISTEMA DE EVALUACIÓN
 // ===============================
 
 async function sendReviewRequest(member, staffMember, ticketId, duration) {
@@ -455,7 +453,6 @@ async function handleReview(interaction) {
       content: `✅ ¡Gracias por tu evaluación! Has calificado con ${starRating}`,
     });
     
-    // Eliminar el mensaje original con los botones
     try {
       await interaction.message.delete();
     } catch (error) {
@@ -473,7 +470,7 @@ async function handleReview(interaction) {
 }
 
 // ===============================
-// SISTEMA DE AUDIO MEJORADO CON SECUENCIAS
+// 🎵 SISTEMA DE AUDIO PROFESIONAL
 // ===============================
 
 function checkAudioFiles() {
@@ -527,7 +524,7 @@ async function connectToVoiceChannel(channel) {
 }
 
 // ===============================
-// 🎵 REPRODUCIR AUDIO (MEJORADO PARA EVITAR CORTES)
+// 🎵 REPRODUCIR AUDIO (CORE)
 // ===============================
 
 async function playAudio(connection, channelId, audioFile, volume = 1.0, description = "Audio") {
@@ -548,7 +545,6 @@ async function playAudio(connection, channelId, audioFile, volume = 1.0, descrip
       });
 
       resource.volume.setVolume(volume);
-
       connection.subscribe(player);
       botState.currentPlayers.set(channelId, player);
 
@@ -574,137 +570,126 @@ async function playAudio(connection, channelId, audioFile, volume = 1.0, descrip
 }
 
 // ===============================
-// 🎼 SECUENCIA DE AUDIO COMPLETA
+// 🎼 SECUENCIA CALL CENTER PROFESIONAL
 // ===============================
 
-async function startAudioSequence(connection, channelId, member) {
+async function startCallCenterSequence(connection, channelId, member) {
   try {
-    console.log(`\n🎼 ========================================`);
-    console.log(`🎼 INICIANDO SECUENCIA DE AUDIO`);
-    console.log(`👤 Usuario: ${member.user.username}`);
-    console.log(`🎼 ========================================\n`);
+    console.log(`\n╔════════════════════════════════════════════════╗`);
+    console.log(`║  🎼 INICIANDO SECUENCIA CALL CENTER PROFESIONAL ║`);
+    console.log(`║  👤 Usuario: ${member.user.username.padEnd(30)}║`);
+    console.log(`╚════════════════════════════════════════════════╝\n`);
 
-    // Marcar como primera reproducción
-    botState.isFirstPlay.set(channelId, true);
-    botState.musicCycles.set(channelId, 0);
+    botState.cycleCounters.set(channelId, 0);
 
-    // PASO 1: Música de bienvenida (15 segundos)
-    console.log(`📻 PASO 1: Música de bienvenida`);
-    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.3, "Música de Bienvenida");
-    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
-
-    // Verificar si el canal aún tiene usuarios
-    if (!await checkChannelHasUsers(channelId)) return;
-
-    // PASO 2: Primera voz (voz_atendiendo.mp3)
-    console.log(`📻 PASO 2: Voz de atención`);
-    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_WAITING, 1.0, "Voz Atendiendo");
-    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎵 PASO 1: Música de Bienvenida (8 segundos)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`📻 [PASO 1] Música de Bienvenida (8s)`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.35, "🎵 Música Intro");
+    await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // PASO 3: Música de espera nuevamente
-    console.log(`📻 PASO 3: Música de espera`);
-    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.25, "Música de Espera");
-    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎙️ PASO 2: Primera Voz (Atendiendo)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`📻 [PASO 2] Voz: "Estamos atendiendo su llamada..."`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_WAITING, 1.0, "🎙️ Voz Atendiendo");
+    await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // PASO 4: Voz según rol (VIP/Donador o normal)
-    console.log(`📻 PASO 4: Voz según rol`);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎵 PASO 3: Música Intermedia (15 segundos)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`📻 [PASO 3] Música de Espera (15s)`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.28, "🎵 Música Espera");
+    await wait(CONFIG.TRANSITION_BUFFER);
+
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎙️ PASO 4: Voz VIP/Donador o Normal
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let roleVoice = CONFIG.AUDIO_FILES.VOICE_WAITING;
+    let roleDesc = "Normal";
     
     if (isVIP(member)) {
       roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP;
-      console.log(`👑 Usuario VIP: ${member.user.username}`);
+      roleDesc = "VIP 👑";
     } else if (isDonator(member)) {
       roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP;
-      console.log(`⭐ Usuario Donador: ${member.user.username}`);
+      roleDesc = "Donador ⭐";
     }
     
-    await playAudio(connection, channelId, roleVoice, 1.0, "Voz Rol");
-    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+    console.log(`📻 [PASO 4] Voz Rol: ${roleDesc}`);
+    await playAudio(connection, channelId, roleVoice, 1.0, `🎙️ Voz ${roleDesc}`);
+    await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // PASO 5: Verificar staff disponible
-    console.log(`📻 PASO 5: Verificar staff disponible`);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🔍 PASO 5: Verificar Staff y Voz de No Disponible
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const channel = client.channels.cache.get(channelId);
     const availableStaff = getAvailableStaff(channel.guild);
     
     if (availableStaff.length === 0) {
-      console.log(`🚨 Sin staff disponible`);
-      await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_NO_STAFF, 1.0, "Voz Sin Staff");
-      await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+      console.log(`📻 [PASO 5] ⚠️ Sin Staff - Reproduciendo voz especial`);
+      await wait(CONFIG.MUSIC_BETWEEN_VOICES);
+      await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_NO_STAFF, 1.0, "🎙️ Voz Sin Staff");
+      await wait(CONFIG.TRANSITION_BUFFER);
+    } else {
+      console.log(`📻 [PASO 5] ✅ Staff disponible: ${availableStaff.length}`);
     }
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // PASO 6: Iniciar ciclo de música
-    console.log(`📻 PASO 6: Iniciando ciclo de música continua`);
-    botState.isFirstPlay.set(channelId, false);
-    await continueMusicCycle(connection, channelId);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🔄 PASO 6: Iniciar Ciclo Continuo
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`📻 [PASO 6] 🔄 Iniciando ciclo continuo...\n`);
+    await startMusicVoiceCycle(connection, channelId);
 
   } catch (error) {
-    console.error('❌ Error en secuencia de audio:', error);
+    console.error('❌ Error en secuencia call center:', error);
   }
 }
 
 // ===============================
-// 🔄 CICLO CONTINUO DE MÚSICA
+// 🔄 CICLO CONTINUO: Música → Voz → Música → Voz...
 // ===============================
 
-async function continueMusicCycle(connection, channelId) {
+async function startMusicVoiceCycle(connection, channelId) {
   try {
     if (!await checkChannelHasUsers(channelId)) return;
 
-    const currentCycle = (botState.musicCycles.get(channelId) || 0) + 1;
-    botState.musicCycles.set(channelId, currentCycle);
+    const currentCycle = (botState.cycleCounters.get(channelId) || 0) + 1;
+    botState.cycleCounters.set(channelId, currentCycle);
     
-    const duration = CONFIG.INITIAL_MUSIC_DURATION + (currentCycle * CONFIG.MUSIC_INCREMENT);
+    // Calcular duración de música (incrementa progresivamente)
+    let musicDuration = CONFIG.MUSIC_CYCLE_BASE + ((currentCycle - 1) * CONFIG.MUSIC_CYCLE_INCREMENT);
+    if (musicDuration > CONFIG.MAX_MUSIC_DURATION) {
+      musicDuration = CONFIG.MAX_MUSIC_DURATION;
+    }
     
-    console.log(`🔄 Ciclo ${currentCycle}: Música por ${duration / 1000} segundos`);
+    console.log(`\n┌─────────────────────────────────────┐`);
+    console.log(`│  🔄 CICLO #${currentCycle} - MÚSICA + VOZ       │`);
+    console.log(`└─────────────────────────────────────┘`);
     
-    // Reproducir música por la duración calculada
-    const musicPlayer = createAudioPlayer();
-    const resource = createAudioResource(CONFIG.AUDIO_FILES.WELCOME_MUSIC, {
-      inlineVolume: true,
-      inputType: StreamType.Arbitrary
-    });
-    
-    resource.volume.setVolume(0.25);
-    connection.subscribe(musicPlayer);
-    botState.currentPlayers.set(channelId, musicPlayer);
-    musicPlayer.play(resource);
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎵 Reproducir Música
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`🎵 Reproduciendo música (${musicDuration / 1000}s)...`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.25, "🎵 Música Ciclo");
+    await wait(CONFIG.TRANSITION_BUFFER);
 
-    // Programar la siguiente acción
-    const timer = setTimeout(async () => {
-      musicPlayer.stop();
-      await wait(CONFIG.VOICE_OVERLAP_BUFFER);
-      
-      if (!await checkChannelHasUsers(channelId)) return;
-      
-      // Reproducir voz intermedia
-      await playIntermediateVoice(connection, channelId);
-      
-      // Continuar con el siguiente ciclo
-      await continueMusicCycle(connection, channelId);
-      
-    }, duration);
+    if (!await checkChannelHasUsers(channelId)) return;
 
-    botState.audioTimers.set(channelId, timer);
-
-  } catch (error) {
-    console.error('❌ Error en ciclo de música:', error);
-  }
-}
-
-// ===============================
-// 🎙️ VOZ INTERMEDIA
-// ===============================
-
-async function playIntermediateVoice(connection, channelId) {
-  try {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🎙️ Reproducir Voz Apropiada
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const channel = client.channels.cache.get(channelId);
     if (!channel) return;
     
@@ -712,25 +697,44 @@ async function playIntermediateVoice(connection, channelId) {
     if (humans.size === 0) return;
 
     const availableStaff = getAvailableStaff(channel.guild);
-    let audioFile = CONFIG.AUDIO_FILES.VOICE_WAITING;
+    let voiceFile = CONFIG.AUDIO_FILES.VOICE_WAITING;
+    let voiceDesc = "Atendiendo";
     
+    // Verificar sin staff primero
     if (availableStaff.length === 0) {
-      audioFile = CONFIG.AUDIO_FILES.VOICE_NO_STAFF;
+      voiceFile = CONFIG.AUDIO_FILES.VOICE_NO_STAFF;
+      voiceDesc = "Sin Staff Disponible ⚠️";
     } else {
       // Verificar VIP/Donador
       for (const [id, member] of humans) {
-        if (isVIP(member) || isDonator(member)) {
-          audioFile = CONFIG.AUDIO_FILES.VOICE_VIP;
+        if (isVIP(member)) {
+          voiceFile = CONFIG.AUDIO_FILES.VOICE_VIP;
+          voiceDesc = "VIP 👑";
+          break;
+        } else if (isDonator(member)) {
+          voiceFile = CONFIG.AUDIO_FILES.VOICE_VIP;
+          voiceDesc = "Donador ⭐";
           break;
         }
       }
     }
 
-    await playAudio(connection, channelId, audioFile, 1.0, "Voz Intermedia");
-    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+    console.log(`🎙️ Reproduciendo voz: ${voiceDesc}`);
+    await playAudio(connection, channelId, voiceFile, 1.0, `🎙️ Voz ${voiceDesc}`);
+    await wait(CONFIG.TRANSITION_BUFFER);
+
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🔄 Continuar con el Siguiente Ciclo
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`✅ Ciclo #${currentCycle} completado. Próximo ciclo en 2s...`);
+    await wait(2000);
+    
+    await startMusicVoiceCycle(connection, channelId);
 
   } catch (error) {
-    console.error('❌ Error en voz intermedia:', error);
+    console.error('❌ Error en ciclo música-voz:', error);
   }
 }
 
@@ -739,7 +743,7 @@ async function playIntermediateVoice(connection, channelId) {
 // ===============================
 
 function stopAllAudio(channelId) {
-  console.log(`🛑 Deteniendo todo el audio del canal`);
+  console.log(`🛑 Deteniendo audio del canal`);
 
   const timer = botState.audioTimers.get(channelId);
   if (timer) {
@@ -753,8 +757,8 @@ function stopAllAudio(channelId) {
     botState.currentPlayers.delete(channelId);
   }
   
-  botState.musicCycles.delete(channelId);
-  botState.isFirstPlay.delete(channelId);
+  botState.cycleCounters.delete(channelId);
+  botState.audioSequences.delete(channelId);
 }
 
 // ===============================
@@ -772,16 +776,13 @@ async function manageWaitingChannelAudio(channel, member) {
   }
 
   await wait(1000);
+  await startCallCenterSequence(connection, channel.id, member);
 
-  // Iniciar secuencia completa
-  await startAudioSequence(connection, channel.id, member);
-
-  console.log(`✅ Sistema de audio iniciado\n`);
+  console.log(`✅ Sistema de audio call center iniciado\n`);
 }
 
 function disconnectFromChannel(channel) {
   console.log(`👋 Desconectando de: ${channel.name}`);
-
   stopAllAudio(channel.id);
 
   const connection = botState.activeConnections.get(channel.id);
@@ -789,14 +790,6 @@ function disconnectFromChannel(channel) {
     connection.destroy();
     botState.activeConnections.delete(channel.id);
   }
-}
-
-// ===============================
-// UTILIDADES
-// ===============================
-
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function checkChannelHasUsers(channelId) {
@@ -830,8 +823,6 @@ function getAvailableStaff(guild) {
     .filter(member => !member.user.bot && isStaff(member))
     .map(member => member);
   
-  console.log(`👨‍💼 Staff disponible: ${available.length}`);
-  
   return available;
 }
 
@@ -855,21 +846,18 @@ function findEmptySupportChannel(guild) {
 
 async function assignUserToStaff(guild) {
   if (botState.queue.length === 0) {
-    console.log('📭 No hay usuarios en cola');
     return;
   }
   
   const availableStaff = getAvailableStaff(guild);
   
   if (availableStaff.length === 0) {
-    console.log('❌ No hay staff disponible');
     return;
   }
   
   const supportChannel = findEmptySupportChannel(guild);
   
   if (!supportChannel) {
-    console.log('❌ No hay canales de soporte disponibles');
     return;
   }
   
@@ -886,7 +874,7 @@ async function assignUserToStaff(guild) {
   try {
     await nextUser.member.voice.setChannel(supportChannel);
     await nextUser.member.voice.setMute(false);
-    console.log(`✅ Usuario movido a ${supportChannel.name} (sin mute)`);
+    console.log(`✅ Usuario movido a ${supportChannel.name}`);
     
     await staff.voice.setChannel(supportChannel);
     console.log(`✅ Staff movido a ${supportChannel.name}`);
@@ -991,7 +979,7 @@ async function startStaffUnavailableTimer(member, guild) {
   }, CONFIG.STAFF_UNAVAILABLE_WARNING_TIME);
   
   botState.staffUnavailableTimers.set(member.id, timer);
-  console.log(`⏱️ Temporizador iniciado para ${member.user.username} en canal no disponible`);
+  console.log(`⏱️ Temporizador iniciado para ${member.user.username}`);
 }
 
 async function notifyStaffUnavailable(member, guild) {
@@ -1003,36 +991,20 @@ async function notifyStaffUnavailable(member, guild) {
       .setTitle('⚠️ Recordatorio - Canal No Disponible')
       .setDescription(`Has estado en el canal de **Staff No Disponible** por **${timeInMinutes} minutos**.`)
       .addFields(
-        { name: '💬 Mensaje', value: 'Entendemos que necesitas descansar, pero el equipo necesita tu apoyo para atender a los usuarios en espera.' }
+        { name: '💬 Mensaje', value: 'Entendemos que necesitas descansar, pero el equipo necesita tu apoyo.' }
       )
       .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
       .setTimestamp();
     
     try {
       await member.user.send({ embeds: [dmEmbed] });
-      console.log(`📧 Notificación enviada a ${member.user.username} (No disponible ${timeInMinutes} min)`);
+      console.log(`📧 Notificación enviada a ${member.user.username}`);
     } catch (error) {
-      console.error(`❌ Error enviando DM a ${member.user.username}:`, error.message);
-    }
-    
-    const staffChannel = guild.channels.cache.get(CONFIG.STAFF_TEXT_CHANNEL_ID);
-    if (staffChannel) {
-      const staffNotifyEmbed = new EmbedBuilder()
-        .setColor('#FFA500')
-        .setTitle('⚠️ Staff en Canal No Disponible')
-        .setDescription(`**${member.user.username}** lleva **${timeInMinutes} minutos** en el canal de Staff No Disponible.`)
-        .addFields(
-          { name: '📝 Acción requerida', value: 'Se requiere justificación del motivo de la ausencia prolongada.' }
-        )
-        .setFooter({ text: 'El Patio RP - Monitoreo de Staff' })
-        .setTimestamp();
-      
-      await staffChannel.send({ embeds: [staffNotifyEmbed] });
-      console.log(`📢 Alerta enviada al canal de staff sobre ${member.user.username}`);
+      console.error(`❌ Error enviando DM:`, error.message);
     }
     
   } catch (error) {
-    console.error('❌ Error notificando staff no disponible:', error.message);
+    console.error('❌ Error notificando staff:', error.message);
   }
 }
 
@@ -1041,7 +1013,6 @@ function cancelStaffUnavailableTimer(memberId) {
   if (timer) {
     clearTimeout(timer);
     botState.staffUnavailableTimers.delete(memberId);
-    console.log(`⏱️ Temporizador cancelado para miembro ${memberId}`);
   }
 }
 
@@ -1097,13 +1068,12 @@ async function handleDescansoCommand(interaction) {
     
     await interaction.reply({ embeds: [embed], ephemeral: true });
     
-    // Programar recordatorio
     setTimeout(async () => {
       try {
         const reminderEmbed = new EmbedBuilder()
           .setColor('#00FF00')
           .setTitle('⏰ Fin del Descanso')
-          .setDescription(`Tu descanso de **${minutos} minuto(s)** ha terminado.\n\nPuedes volver al canal de Staff Disponible cuando estés listo.`)
+          .setDescription(`Tu descanso de **${minutos} minuto(s)** ha terminado.`)
           .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
           .setTimestamp();
         
@@ -1116,7 +1086,7 @@ async function handleDescansoCommand(interaction) {
     console.log(`☕ ${interaction.user.username} tomó descanso de ${minutos} minutos`);
     
   } catch (error) {
-    await interaction.reply({ content: '❌ Error al tomar descanso. Asegúrate de estar en un canal de voz.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error al tomar descanso.', ephemeral: true });
   }
 }
 
@@ -1140,19 +1110,18 @@ async function handleVolverCommand(interaction) {
     const embed = new EmbedBuilder()
       .setColor('#00FF00')
       .setTitle('✅ De Vuelta al Servicio')
-      .setDescription(`Has sido movido al canal de **Staff Disponible**\n\nEstás listo para atender usuarios.`)
+      .setDescription(`Has sido movido al canal de **Staff Disponible**`)
       .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
       .setTimestamp();
     
     await interaction.reply({ embeds: [embed], ephemeral: true });
     
-    // Cancelar temporizador si existe
     cancelStaffUnavailableTimer(interaction.member.id);
     
     console.log(`✅ ${interaction.user.username} volvió al servicio`);
     
   } catch (error) {
-    await interaction.reply({ content: '❌ Error al volver. Asegúrate de estar en un canal de voz.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error al volver.', ephemeral: true });
   }
 }
 
@@ -1188,7 +1157,7 @@ async function handleColaCommand(interaction) {
     const embed = new EmbedBuilder()
       .setColor('#00FF00')
       .setTitle('📭 Cola Vacía')
-      .setDescription('No hay usuarios esperando en este momento.')
+      .setDescription('No hay usuarios esperando.')
       .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
       .setTimestamp();
     
@@ -1207,10 +1176,10 @@ async function handleColaCommand(interaction) {
     .setTitle('📋 Cola de Espera')
     .setDescription(queueList)
     .addFields(
-      { name: '👥 Total en Cola', value: `${queueLength}`, inline: true },
+      { name: '👥 Total', value: `${queueLength}`, inline: true },
       { name: '🎯 Próximo', value: botState.queue[0].member.user.username, inline: true }
     )
-    .setFooter({ text: queueLength > 10 ? `Mostrando 10 de ${queueLength}` : 'El Patio RP - Sistema de Soporte' })
+    .setFooter({ text: queueLength > 10 ? `Mostrando 10 de ${queueLength}` : 'El Patio RP' })
     .setTimestamp();
   
   await interaction.reply({ embeds: [embed], ephemeral: true });
@@ -1230,7 +1199,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   const staffAvailableId = CONFIG.STAFF_AVAILABLE_CHANNEL_ID;
   const staffBusyId = CONFIG.STAFF_BUSY_CHANNEL_ID;
   
-  // MONITOREO DE STAFF NO DISPONIBLE
   if (isStaff(member)) {
     if (newState.channelId === staffBusyId && oldState.channelId !== staffBusyId) {
       await startStaffUnavailableTimer(member, guild);
@@ -1241,13 +1209,12 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     }
   }
   
-  // ENTRA A ESPERA
   if (newState.channelId === waitingId && oldState.channelId !== waitingId) {
     console.log(`\n📥 ${member.user.username} entró a espera`);
     
     const channel = newState.channel;
     
-    const entry = addToQueue(member);
+    addToQueue(member);
     await sendOrUpdateQueueDM(member);
     await manageWaitingChannelAudio(channel, member);
     
@@ -1256,7 +1223,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     }, CONFIG.TIME_BEFORE_ASSIGN);
   }
   
-  // SALE DE ESPERA
   if (oldState.channelId === waitingId && newState.channelId !== waitingId) {
     console.log(`\n📤 ${member.user.username} salió de espera`);
     
@@ -1266,36 +1232,21 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     const channel = oldState.channel;
     const humans = channel.members.filter(m => !m.user.bot);
     
-    console.log(`👥 Usuarios restantes: ${humans.size}`);
-    
     if (humans.size === 0) {
       disconnectFromChannel(channel);
     } else {
-      // Si todavía hay usuarios, reiniciar la secuencia para el primer usuario
-      const firstUser = humans.first();
-      const isFirst = botState.isFirstPlay.get(channel.id);
-      
-      if (!isFirst) {
-        console.log(`🔄 Reiniciando secuencia para ${firstUser.user.username}`);
-        stopAllAudio(channel.id);
-        const connection = botState.activeConnections.get(channel.id);
-        if (connection) {
-          await startAudioSequence(connection, channel.id, firstUser);
-        }
-      }
+      console.log(`🔄 Continuando audio para ${humans.size} usuarios restantes`);
     }
     
     await updateAllQueueMessages();
   }
   
-  // SALE DE SOPORTE
   const supportInfo = botState.activeSupport.get(member.id);
   
   if (supportInfo && oldState.channelId === supportInfo.channelId && newState.channelId !== supportInfo.channelId) {
     console.log(`\n✅ ${member.user.username} terminó soporte`);
     
     const duration = Math.floor((Date.now() - supportInfo.startTime) / 60000);
-    console.log(`⏱️ Duración: ${duration} minutos`);
     
     const staffMember = guild.members.cache.get(supportInfo.staffId);
     if (staffMember) {
@@ -1346,7 +1297,7 @@ client.on('interactionCreate', async (interaction) => {
     } catch (error) {
       console.error('❌ Error manejando comando:', error);
       if (!interaction.replied) {
-        await interaction.reply({ content: '❌ Hubo un error ejecutando el comando.', ephemeral: true });
+        await interaction.reply({ content: '❌ Error ejecutando comando.', ephemeral: true });
       }
     }
   }
@@ -1357,14 +1308,13 @@ client.on('interactionCreate', async (interaction) => {
 // ===============================
 
 client.once("ready", async () => {
-  console.log(`\n╔════════════════════════════════════════╗`);
-  console.log(`║  ✅ EL PATIO RP - BOT V3.3 OPTIMIZADO ║`);
-  console.log(`║  👤 ${client.user.tag.padEnd(31)}║`);
-  console.log(`╚════════════════════════════════════════╝\n`);
+  console.log(`\n╔════════════════════════════════════════════════╗`);
+  console.log(`║  ✅ EL PATIO RP - CALL CENTER V4.0 ULTRA PRO  ║`);
+  console.log(`║  👤 ${client.user.tag.padEnd(37)}║`);
+  console.log(`╚════════════════════════════════════════════════╝\n`);
   
   checkAudioFiles();
   
-  // Registrar comandos slash
   const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
   
   try {
@@ -1375,7 +1325,7 @@ client.once("ready", async () => {
       { body: commands },
     );
     
-    console.log('✅ Comandos slash registrados');
+    console.log('✅ Comandos slash registrados\n');
   } catch (error) {
     console.error('❌ Error registrando comandos:', error);
   }
@@ -1384,7 +1334,7 @@ client.once("ready", async () => {
   
   if (guild) {
     startQueueUpdater(guild);
-    console.log(`🔄 Sistema iniciado`);
+    console.log(`🔄 Sistema de cola iniciado`);
     
     const waitingChannel = guild.channels.cache.get(CONFIG.WAITING_CHANNEL_ID);
     
@@ -1405,12 +1355,15 @@ client.once("ready", async () => {
     }
   }
   
-  console.log(`\n✅ Bot listo y operativo`);
-  console.log(`📊 Canales soporte: ${CONFIG.SUPPORT_CHANNELS.length}`);
-  console.log(`🎵 Sistema de audio optimizado: ACTIVO`);
-  console.log(`⭐ Sistema de calificación: CORREGIDO`);
-  console.log(`⚠️ Monitoreo de staff: ACTIVO`);
-  console.log(`🎮 Comandos disponibles: /descanso, /volver, /estadisticas, /cola\n`);
+  console.log(`\n✅ BOT LISTO Y OPERATIVO`);
+  console.log(`╔════════════════════════════════════════════════╗`);
+  console.log(`║  🎵 SISTEMA CALL CENTER PROFESIONAL            ║`);
+  console.log(`║  ✅ Balance Música/Voz: OPTIMIZADO             ║`);
+  console.log(`║  ✅ Secuencia: Música → Voz → Música → Voz     ║`);
+  console.log(`║  ✅ Detección VIP/Donador/Sin Staff: ACTIVA    ║`);
+  console.log(`║  ⭐ Sistema de Evaluación: FUNCIONAL           ║`);
+  console.log(`║  🎮 Comandos: /descanso /volver /stats /cola   ║`);
+  console.log(`╚════════════════════════════════════════════════╝\n`);
 });
 
 // ===============================
@@ -1429,7 +1382,7 @@ client.on('error', error => {
 // LOGIN
 // ===============================
 
-console.log("🚀 Iniciando El Patio RP Bot V3.3 OPTIMIZADO...\n");
+console.log("🚀 Iniciando El Patio RP Call Center V4.0 ULTRA PRO...\n");
 
 client.login(CONFIG.TOKEN).catch(err => {
   console.error("❌ Error login:", err);
