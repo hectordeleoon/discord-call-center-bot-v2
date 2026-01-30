@@ -55,16 +55,6 @@ const CONFIG = {
   AVERAGE_SUPPORT_TIME: 3
 };
 
-
-  },
-  
-  VOICE_REPEAT_INTERVAL: parseInt(process.env.VOICE_REPEAT_INTERVAL) || 60000,
-  TIME_BEFORE_ASSIGN: parseInt(process.env.TIME_BEFORE_ASSIGN) || 5000,
-  QUEUE_UPDATE_INTERVAL: parseInt(process.env.QUEUE_UPDATE_INTERVAL) || 10000,
-  
-  AVERAGE_SUPPORT_TIME: 3
-};
-
 // ===============================
 // ESTADO DEL BOT
 // ===============================
