@@ -11,7 +11,10 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  REST,
+  Routes
 } = require("discord.js");
 
 const {
@@ -44,17 +47,20 @@ const CONFIG = {
   DONATOR_ROLES: process.env.DONATOR_ROLES?.split(',').map(id => id.trim()) || [],
 
   AUDIO_FILES: {
-    BACKGROUND_MUSIC: "./musica_espera.mp3",
-    VOICE_WAITING: "./voz_atendiendo.mp3",
-    VOICE_NO_STAFF: "./voz_no_disponible.mp3",
-    VOICE_VIP: "./voz_vip.mp3"
+    WELCOME_MUSIC: "./musica_espera.mp3",        // Música de bienvenida
+    VOICE_WAITING: "./voz_atendiendo.mp3",       // Voz normal: "Estamos atendiendo..."
+    VOICE_NO_STAFF: "./voz_no_disponible.mp3",   // Voz sin staff
+    VOICE_VIP: "./voz_vip.mp3"                   // Voz VIP/Donador
   },
 
-  INITIAL_MUSIC_DURATION: 30000, // 30 segundos inicial
-  MUSIC_INCREMENT: 5000, // Incremento de 5 segundos
+  WELCOME_MUSIC_DURATION: 15000,      // 15 segundos de música de bienvenida
+  INITIAL_MUSIC_DURATION: 30000,      // 30 segundos de música entre voces
+  MUSIC_INCREMENT: 5000,               // Incremento de 5 segundos
+  VOICE_OVERLAP_BUFFER: 1500,         // Buffer para evitar cortes (1.5 segundos)
+  
   TIME_BEFORE_ASSIGN: 5000,
   QUEUE_UPDATE_INTERVAL: 10000,
-  NO_STAFF_WARNING_TIME: 180000, // 3 minutos sin atención
+  NO_STAFF_WARNING_TIME: 180000,      // 3 minutos sin atención
   STAFF_UNAVAILABLE_WARNING_TIME: 1800000, // 30 minutos en no disponible
 
   AVERAGE_SUPPORT_TIME: 3
@@ -65,12 +71,13 @@ const CONFIG = {
 // ===============================
 
 const botState = {
-  // Audio - Sistema mejorado
+  // Audio - Sistema mejorado con secuencia
   activeConnections: new Map(),
-  musicPlayers: new Map(),
-  voicePlayers: new Map(),
-  audioTimers: new Map(), // Temporizadores para música
-  musicCycles: new Map(), // Contador de ciclos de música
+  audioSequences: new Map(),        // Secuencias de audio por canal
+  currentPlayers: new Map(),        // Reproductor actual
+  audioTimers: new Map(),
+  musicCycles: new Map(),
+  isFirstPlay: new Map(),           // Para controlar reproducción inicial
   
   // Cola de soporte
   queue: [],
@@ -83,11 +90,11 @@ const botState = {
   
   // Staff
   lastStaffNotification: null,
-  staffUnavailableTimers: new Map(), // Temporizadores para staff no disponible
-  noStaffWarnings: new Map(), // Advertencias enviadas por falta de staff
+  staffUnavailableTimers: new Map(),
+  noStaffWarnings: new Map(),
   
   // Sistema de evaluación
-  pendingReviews: new Map() // Usuarios pendientes de calificar
+  pendingReviews: new Map()
 };
 
 // ===============================
@@ -109,8 +116,37 @@ const client = new Client({
 // ===============================
 
 const app = express();
-app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V3.2 MEJORADO"));
-app.listen(3000, () => console.log("🌐 Web activa"));
+app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V3.3 OPTIMIZADO"));
+app.listen(3000, () => console.log("🌐 Web activa en puerto 3000"));
+
+// ===============================
+// COMANDOS SLASH
+// ===============================
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName('descanso')
+    .setDescription('Tomar un descanso temporal del soporte')
+    .addIntegerOption(option =>
+      option.setName('minutos')
+        .setDescription('Duración del descanso en minutos (máximo 60)')
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(60)
+    ),
+  
+  new SlashCommandBuilder()
+    .setName('volver')
+    .setDescription('Volver al servicio de soporte'),
+  
+  new SlashCommandBuilder()
+    .setName('estadisticas')
+    .setDescription('Ver estadísticas del sistema de soporte'),
+  
+  new SlashCommandBuilder()
+    .setName('cola')
+    .setDescription('Ver el estado actual de la cola de espera')
+].map(command => command.toJSON());
 
 // ===============================
 // UTILIDADES
@@ -176,7 +212,6 @@ function addToQueue(member) {
   
   console.log(`📋 ${member.user.username} en cola (Ticket: ${ticketId}, Prioridad: ${priority})`);
   
-  // Iniciar temporizador de advertencia por falta de staff
   const warningTimer = setTimeout(async () => {
     await sendNoStaffWarning(member.guild, queueEntry);
   }, CONFIG.NO_STAFF_WARNING_TIME);
@@ -193,7 +228,6 @@ function removeFromQueue(userId) {
     const removed = botState.queue.splice(index, 1)[0];
     console.log(`📋 ${removed.member.user.username} removido de cola`);
     
-    // Cancelar temporizador de advertencia
     const warningTimer = botState.noStaffWarnings.get(userId);
     if (warningTimer) {
       clearTimeout(warningTimer);
@@ -321,7 +355,7 @@ async function updateAllQueueMessages() {
 }
 
 // ===============================
-// SISTEMA DE EVALUACIÓN
+// SISTEMA DE EVALUACIÓN (CORREGIDO)
 // ===============================
 
 async function sendReviewRequest(member, staffMember, ticketId, duration) {
@@ -340,23 +374,23 @@ async function sendReviewRequest(member, staffMember, ticketId, duration) {
     const row = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId(`review_5_${staffMember.id}_${ticketId}`)
+          .setCustomId(`review:5:${staffMember.id}:${ticketId}:${member.id}`)
           .setLabel('⭐⭐⭐⭐⭐')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId(`review_4_${staffMember.id}_${ticketId}`)
+          .setCustomId(`review:4:${staffMember.id}:${ticketId}:${member.id}`)
           .setLabel('⭐⭐⭐⭐')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-          .setCustomId(`review_3_${staffMember.id}_${ticketId}`)
+          .setCustomId(`review:3:${staffMember.id}:${ticketId}:${member.id}`)
           .setLabel('⭐⭐⭐')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId(`review_2_${staffMember.id}_${ticketId}`)
+          .setCustomId(`review:2:${staffMember.id}:${ticketId}:${member.id}`)
           .setLabel('⭐⭐')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId(`review_1_${staffMember.id}_${ticketId}`)
+          .setCustomId(`review:1:${staffMember.id}:${ticketId}:${member.id}`)
           .setLabel('⭐')
           .setStyle(ButtonStyle.Danger)
       );
@@ -373,14 +407,28 @@ async function sendReviewRequest(member, staffMember, ticketId, duration) {
 
 async function handleReview(interaction) {
   try {
-    const [action, stars, staffId, ticketId] = interaction.customId.split('_');
+    await interaction.deferReply({ ephemeral: true });
     
-    if (action !== 'review') return;
+    const parts = interaction.customId.split(':');
+    const stars = parseInt(parts[1]);
+    const staffId = parts[2];
+    const ticketId = parts[3];
+    const userId = parts[4];
     
-    const guild = interaction.guild;
-    const staffMember = await guild.members.fetch(staffId);
+    const guild = client.guilds.cache.first();
+    if (!guild) {
+      await interaction.editReply({ content: '❌ Error: No se pudo encontrar el servidor.' });
+      return;
+    }
     
-    const starRating = '⭐'.repeat(parseInt(stars));
+    const staffMember = await guild.members.fetch(staffId).catch(() => null);
+    
+    if (!staffMember) {
+      await interaction.editReply({ content: '❌ Error: No se pudo encontrar al staff member.' });
+      return;
+    }
+    
+    const starRating = '⭐'.repeat(stars);
     
     const reviewEmbed = new EmbedBuilder()
       .setColor(stars >= 4 ? '#00FF00' : stars === 3 ? '#FFA500' : '#FF0000')
@@ -395,25 +443,37 @@ async function handleReview(interaction) {
       .setTimestamp();
     
     const reviewChannel = guild.channels.cache.get(CONFIG.REVIEW_CHANNEL_ID);
+    
     if (reviewChannel) {
       await reviewChannel.send({ embeds: [reviewEmbed] });
+      console.log(`⭐ Evaluación publicada: ${interaction.user.username} -> ${staffMember.user.username} = ${stars} estrellas`);
+    } else {
+      console.error('❌ Canal de reseñas no encontrado');
     }
     
-    await interaction.update({
+    await interaction.editReply({
       content: `✅ ¡Gracias por tu evaluación! Has calificado con ${starRating}`,
-      embeds: [],
-      components: []
     });
     
-    console.log(`⭐ Evaluación recibida: ${interaction.user.username} -> ${staffMember.user.username} = ${stars} estrellas`);
+    // Eliminar el mensaje original con los botones
+    try {
+      await interaction.message.delete();
+    } catch (error) {
+      console.log('ℹ️ No se pudo eliminar el mensaje original de evaluación');
+    }
     
   } catch (error) {
-    console.error('❌ Error procesando evaluación:', error.message);
+    console.error('❌ Error procesando evaluación:', error);
+    try {
+      await interaction.editReply({ content: '❌ Hubo un error al procesar tu evaluación. Por favor intenta nuevamente.' });
+    } catch (e) {
+      console.error('❌ Error enviando mensaje de error:', e);
+    }
   }
 }
 
 // ===============================
-// SISTEMA DE AUDIO MEJORADO
+// SISTEMA DE AUDIO MEJORADO CON SECUENCIAS
 // ===============================
 
 function checkAudioFiles() {
@@ -467,202 +527,238 @@ async function connectToVoiceChannel(channel) {
 }
 
 // ===============================
-// 🎵 MÚSICA DE FONDO (SISTEMA MEJORADO)
+// 🎵 REPRODUCIR AUDIO (MEJORADO PARA EVITAR CORTES)
 // ===============================
 
-function playBackgroundMusic(connection, channelId, duration) {
-  console.log(`🎵 Iniciando música de fondo por ${duration / 1000} segundos...`);
+async function playAudio(connection, channelId, audioFile, volume = 1.0, description = "Audio") {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!fs.existsSync(audioFile)) {
+        console.error(`❌ Archivo no encontrado: ${audioFile}`);
+        reject(new Error('Archivo no encontrado'));
+        return;
+      }
 
+      console.log(`🔊 Reproduciendo ${description}: ${path.basename(audioFile)} (Vol: ${volume * 100}%)`);
+
+      const player = createAudioPlayer();
+      const resource = createAudioResource(audioFile, {
+        inlineVolume: true,
+        inputType: StreamType.Arbitrary
+      });
+
+      resource.volume.setVolume(volume);
+
+      connection.subscribe(player);
+      botState.currentPlayers.set(channelId, player);
+
+      player.play(resource);
+
+      player.on(AudioPlayerStatus.Idle, () => {
+        console.log(`✅ ${description} finalizado`);
+        botState.currentPlayers.delete(channelId);
+        resolve();
+      });
+
+      player.on('error', error => {
+        console.error(`❌ Error en ${description}:`, error);
+        botState.currentPlayers.delete(channelId);
+        reject(error);
+      });
+
+    } catch (error) {
+      console.error(`❌ Error reproduciendo ${description}:`, error);
+      reject(error);
+    }
+  });
+}
+
+// ===============================
+// 🎼 SECUENCIA DE AUDIO COMPLETA
+// ===============================
+
+async function startAudioSequence(connection, channelId, member) {
   try {
-    if (!fs.existsSync(CONFIG.AUDIO_FILES.BACKGROUND_MUSIC)) {
-      console.error("❌ Archivo de música no encontrado");
-      return;
-    }
+    console.log(`\n🎼 ========================================`);
+    console.log(`🎼 INICIANDO SECUENCIA DE AUDIO`);
+    console.log(`👤 Usuario: ${member.user.username}`);
+    console.log(`🎼 ========================================\n`);
 
-    // Detener música anterior si existe
-    const oldPlayer = botState.musicPlayers.get(channelId);
-    if (oldPlayer) {
-      oldPlayer.stop();
-    }
+    // Marcar como primera reproducción
+    botState.isFirstPlay.set(channelId, true);
+    botState.musicCycles.set(channelId, 0);
 
-    const musicPlayer = createAudioPlayer();
+    // PASO 1: Música de bienvenida (15 segundos)
+    console.log(`📻 PASO 1: Música de bienvenida`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.3, "Música de Bienvenida");
+    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+
+    // Verificar si el canal aún tiene usuarios
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    // PASO 2: Primera voz (voz_atendiendo.mp3)
+    console.log(`📻 PASO 2: Voz de atención`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_WAITING, 1.0, "Voz Atendiendo");
+    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    // PASO 3: Música de espera nuevamente
+    console.log(`📻 PASO 3: Música de espera`);
+    await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.25, "Música de Espera");
+    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    // PASO 4: Voz según rol (VIP/Donador o normal)
+    console.log(`📻 PASO 4: Voz según rol`);
+    let roleVoice = CONFIG.AUDIO_FILES.VOICE_WAITING;
     
-    const resource = createAudioResource(
-      CONFIG.AUDIO_FILES.BACKGROUND_MUSIC,
-      { inlineVolume: true, inputType: StreamType.Arbitrary }
-    );
+    if (isVIP(member)) {
+      roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP;
+      console.log(`👑 Usuario VIP: ${member.user.username}`);
+    } else if (isDonator(member)) {
+      roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP;
+      console.log(`⭐ Usuario Donador: ${member.user.username}`);
+    }
+    
+    await playAudio(connection, channelId, roleVoice, 1.0, "Voz Rol");
+    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
 
-    resource.volume.setVolume(0.25); // Volumen bajo para fondo
+    if (!await checkChannelHasUsers(channelId)) return;
 
-    connection.subscribe(musicPlayer);
-    musicPlayer.play(resource);
+    // PASO 5: Verificar staff disponible
+    console.log(`📻 PASO 5: Verificar staff disponible`);
+    const channel = client.channels.cache.get(channelId);
+    const availableStaff = getAvailableStaff(channel.guild);
+    
+    if (availableStaff.length === 0) {
+      console.log(`🚨 Sin staff disponible`);
+      await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_NO_STAFF, 1.0, "Voz Sin Staff");
+      await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+    }
 
-    console.log(`✅ Música de fondo iniciada (volumen: 25%)`);
+    if (!await checkChannelHasUsers(channelId)) return;
 
-    // Temporizador para detener música y reproducir voz
-    const timer = setTimeout(() => {
-      musicPlayer.stop();
-      console.log(`⏹️ Música detenida después de ${duration / 1000} segundos`);
-      
-      // Reproducir voz después de detener música
-      setTimeout(() => {
-        playVoiceAnnouncement(connection, channelId);
-      }, 500);
-      
-    }, duration);
-
-    botState.audioTimers.set(channelId, timer);
-    botState.musicPlayers.set(channelId, musicPlayer);
-
-    musicPlayer.on('error', error => {
-      console.error('❌ Error en música:', error);
-    });
+    // PASO 6: Iniciar ciclo de música
+    console.log(`📻 PASO 6: Iniciando ciclo de música continua`);
+    botState.isFirstPlay.set(channelId, false);
+    await continueMusicCycle(connection, channelId);
 
   } catch (error) {
-    console.error("❌ Error reproduciendo música:", error);
+    console.error('❌ Error en secuencia de audio:', error);
   }
 }
 
 // ===============================
-// 🎙️ REPRODUCIR VOZ
+// 🔄 CICLO CONTINUO DE MÚSICA
 // ===============================
 
-async function playVoiceAnnouncement(connection, channelId) {
+async function continueMusicCycle(connection, channelId) {
+  try {
+    if (!await checkChannelHasUsers(channelId)) return;
+
+    const currentCycle = (botState.musicCycles.get(channelId) || 0) + 1;
+    botState.musicCycles.set(channelId, currentCycle);
+    
+    const duration = CONFIG.INITIAL_MUSIC_DURATION + (currentCycle * CONFIG.MUSIC_INCREMENT);
+    
+    console.log(`🔄 Ciclo ${currentCycle}: Música por ${duration / 1000} segundos`);
+    
+    // Reproducir música por la duración calculada
+    const musicPlayer = createAudioPlayer();
+    const resource = createAudioResource(CONFIG.AUDIO_FILES.WELCOME_MUSIC, {
+      inlineVolume: true,
+      inputType: StreamType.Arbitrary
+    });
+    
+    resource.volume.setVolume(0.25);
+    connection.subscribe(musicPlayer);
+    botState.currentPlayers.set(channelId, musicPlayer);
+    musicPlayer.play(resource);
+
+    // Programar la siguiente acción
+    const timer = setTimeout(async () => {
+      musicPlayer.stop();
+      await wait(CONFIG.VOICE_OVERLAP_BUFFER);
+      
+      if (!await checkChannelHasUsers(channelId)) return;
+      
+      // Reproducir voz intermedia
+      await playIntermediateVoice(connection, channelId);
+      
+      // Continuar con el siguiente ciclo
+      await continueMusicCycle(connection, channelId);
+      
+    }, duration);
+
+    botState.audioTimers.set(channelId, timer);
+
+  } catch (error) {
+    console.error('❌ Error en ciclo de música:', error);
+  }
+}
+
+// ===============================
+// 🎙️ VOZ INTERMEDIA
+// ===============================
+
+async function playIntermediateVoice(connection, channelId) {
   try {
     const channel = client.channels.cache.get(channelId);
     if (!channel) return;
     
     const humans = channel.members.filter(m => !m.user.bot);
-    
-    if (humans.size === 0) {
-      console.log("📭 Canal vacío, deteniendo audio");
-      stopAllAudio(channelId);
-      disconnectFromChannel(channel);
-      return;
-    }
+    if (humans.size === 0) return;
 
-    // Verificar si hay staff disponible
     const availableStaff = getAvailableStaff(channel.guild);
     let audioFile = CONFIG.AUDIO_FILES.VOICE_WAITING;
     
     if (availableStaff.length === 0) {
       audioFile = CONFIG.AUDIO_FILES.VOICE_NO_STAFF;
-      console.log("🚨 No hay staff disponible - reproduciendo voz especial");
     } else {
-      // Determinar qué voz usar según el usuario
+      // Verificar VIP/Donador
       for (const [id, member] of humans) {
-        if (isVIP(member)) {
+        if (isVIP(member) || isDonator(member)) {
           audioFile = CONFIG.AUDIO_FILES.VOICE_VIP;
-          console.log(`👑 Usuario VIP detectado: ${member.user.username}`);
-          break;
-        } else if (isDonator(member)) {
-          audioFile = CONFIG.AUDIO_FILES.VOICE_VIP;
-          console.log(`⭐ Usuario Donador detectado: ${member.user.username}`);
           break;
         }
       }
     }
 
-    console.log(`🎙️ Reproduciendo voz: ${path.basename(audioFile)}`);
-
-    if (!fs.existsSync(audioFile)) {
-      console.error("❌ Archivo de voz no encontrado:", audioFile);
-      // Continuar con música sin voz
-      scheduleNextMusicCycle(connection, channelId);
-      return;
-    }
-
-    const voicePlayer = createAudioPlayer();
-    
-    const resource = createAudioResource(
-      audioFile,
-      { inlineVolume: true, inputType: StreamType.Arbitrary }
-    );
-
-    resource.volume.setVolume(1.0); // Volumen alto para voz
-
-    connection.subscribe(voicePlayer);
-    voicePlayer.play(resource);
-
-    console.log(`✅ Voz iniciada (volumen: 100%)`);
-
-    voicePlayer.on('error', error => {
-      console.error('❌ Error en voz:', error);
-      scheduleNextMusicCycle(connection, channelId);
-    });
-
-    // Cuando termine la voz, reiniciar música
-    voicePlayer.on(AudioPlayerStatus.Idle, () => {
-      console.log(`🎙️ Voz finalizada`);
-      botState.voicePlayers.delete(channelId);
-      
-      // Pequeña pausa y luego música
-      setTimeout(() => {
-        scheduleNextMusicCycle(connection, channelId);
-      }, 1000);
-    });
-
-    botState.voicePlayers.set(channelId, voicePlayer);
+    await playAudio(connection, channelId, audioFile, 1.0, "Voz Intermedia");
+    await wait(CONFIG.VOICE_OVERLAP_BUFFER);
 
   } catch (error) {
-    console.error("❌ Error reproduciendo voz:", error);
-    scheduleNextMusicCycle(connection, channelId);
+    console.error('❌ Error en voz intermedia:', error);
   }
 }
 
 // ===============================
-// 🔄 PROGRAMAR SIGUIENTE CICLO DE MÚSICA
-// ===============================
-
-function scheduleNextMusicCycle(connection, channelId) {
-  // Incrementar contador de ciclos
-  const currentCycle = (botState.musicCycles.get(channelId) || 0) + 1;
-  botState.musicCycles.set(channelId, currentCycle);
-  
-  // Calcular duración con incremento
-  const duration = CONFIG.INITIAL_MUSIC_DURATION + (currentCycle * CONFIG.MUSIC_INCREMENT);
-  
-  console.log(`🔄 Ciclo ${currentCycle}: Música por ${duration / 1000} segundos`);
-  
-  playBackgroundMusic(connection, channelId, duration);
-}
-
-// ===============================
-// ⛔ DETENER TODO AUDIO
+// 🛑 DETENER TODO AUDIO
 // ===============================
 
 function stopAllAudio(channelId) {
   console.log(`🛑 Deteniendo todo el audio del canal`);
 
-  // Detener temporizador
   const timer = botState.audioTimers.get(channelId);
   if (timer) {
     clearTimeout(timer);
     botState.audioTimers.delete(channelId);
   }
 
-  // Detener música
-  const musicPlayer = botState.musicPlayers.get(channelId);
-  if (musicPlayer) {
-    musicPlayer.stop();
-    botState.musicPlayers.delete(channelId);
-    console.log("🎵 Música detenida");
+  const player = botState.currentPlayers.get(channelId);
+  if (player) {
+    player.stop();
+    botState.currentPlayers.delete(channelId);
   }
   
-  // Detener voz
-  const voicePlayer = botState.voicePlayers.get(channelId);
-  if (voicePlayer) {
-    voicePlayer.stop();
-    botState.voicePlayers.delete(channelId);
-    console.log("🎙️ Voz detenida");
-  }
-  
-  // Reiniciar contador de ciclos
   botState.musicCycles.delete(channelId);
+  botState.isFirstPlay.delete(channelId);
 }
 
 // ===============================
-// 🎧 GESTIÓN COMPLETA DEL AUDIO
+// 🔌 GESTIÓN DE CONEXIÓN
 // ===============================
 
 async function manageWaitingChannelAudio(channel, member) {
@@ -675,20 +771,13 @@ async function manageWaitingChannelAudio(channel, member) {
     if (!connection) return;
   }
 
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await wait(1000);
 
-  // Reiniciar contador de ciclos para este canal
-  botState.musicCycles.set(channel.id, 0);
+  // Iniciar secuencia completa
+  await startAudioSequence(connection, channel.id, member);
 
-  // Iniciar primer ciclo: 30 segundos de música
-  playBackgroundMusic(connection, channel.id, CONFIG.INITIAL_MUSIC_DURATION);
-
-  console.log(`✅ Audio configurado\n`);
+  console.log(`✅ Sistema de audio iniciado\n`);
 }
-
-// ===============================
-// 🚪 DESCONECTAR DEL CANAL
-// ===============================
 
 function disconnectFromChannel(channel) {
   console.log(`👋 Desconectando de: ${channel.name}`);
@@ -700,6 +789,29 @@ function disconnectFromChannel(channel) {
     connection.destroy();
     botState.activeConnections.delete(channel.id);
   }
+}
+
+// ===============================
+// UTILIDADES
+// ===============================
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function checkChannelHasUsers(channelId) {
+  const channel = client.channels.cache.get(channelId);
+  if (!channel) return false;
+  
+  const humans = channel.members.filter(m => !m.user.bot);
+  if (humans.size === 0) {
+    console.log("📭 Canal vacío, deteniendo audio");
+    stopAllAudio(channelId);
+    disconnectFromChannel(channel);
+    return false;
+  }
+  
+  return true;
 }
 
 // ===============================
@@ -772,16 +884,13 @@ async function assignUserToStaff(guild) {
   console.log(`🎯 ========================================`);
   
   try {
-    // Mover usuario y QUITAR MUTE
     await nextUser.member.voice.setChannel(supportChannel);
     await nextUser.member.voice.setMute(false);
     console.log(`✅ Usuario movido a ${supportChannel.name} (sin mute)`);
     
-    // Mover staff
     await staff.voice.setChannel(supportChannel);
     console.log(`✅ Staff movido a ${supportChannel.name}`);
     
-    // Registrar soporte activo
     botState.activeSupport.set(nextUser.userId, {
       staffId: staff.id,
       channelId: supportChannel.id,
@@ -789,10 +898,8 @@ async function assignUserToStaff(guild) {
       ticketId: nextUser.ticketId
     });
     
-    // Remover de la cola
     removeFromQueue(nextUser.userId);
     
-    // Actualizar DM
     const dmInfo = botState.userDMMessages.get(nextUser.userId);
     if (dmInfo) {
       try {
@@ -821,7 +928,6 @@ async function assignUserToStaff(guild) {
     
     await updateAllQueueMessages();
     
-    // Intentar asignar más usuarios
     setTimeout(() => assignUserToStaff(guild), 2000);
     
   } catch (error) {
@@ -875,7 +981,6 @@ async function notifyStaffChannel(guild) {
 // ===============================
 
 async function startStaffUnavailableTimer(member, guild) {
-  // Cancelar temporizador anterior si existe
   const existingTimer = botState.staffUnavailableTimers.get(member.id);
   if (existingTimer) {
     clearTimeout(existingTimer);
@@ -893,7 +998,6 @@ async function notifyStaffUnavailable(member, guild) {
   try {
     const timeInMinutes = CONFIG.STAFF_UNAVAILABLE_WARNING_TIME / 60000;
     
-    // Notificar al staff por DM
     const dmEmbed = new EmbedBuilder()
       .setColor('#FFA500')
       .setTitle('⚠️ Recordatorio - Canal No Disponible')
@@ -911,7 +1015,6 @@ async function notifyStaffUnavailable(member, guild) {
       console.error(`❌ Error enviando DM a ${member.user.username}:`, error.message);
     }
     
-    // Notificar al canal de staff
     const staffChannel = guild.channels.cache.get(CONFIG.STAFF_TEXT_CHANNEL_ID);
     if (staffChannel) {
       const staffNotifyEmbed = new EmbedBuilder()
@@ -960,6 +1063,160 @@ function startQueueUpdater(guild) {
 }
 
 // ===============================
+// COMANDOS SLASH - HANDLERS
+// ===============================
+
+async function handleDescansoCommand(interaction) {
+  if (!isStaff(interaction.member)) {
+    await interaction.reply({ content: '❌ Este comando es solo para staff.', ephemeral: true });
+    return;
+  }
+  
+  const minutos = interaction.options.getInteger('minutos');
+  const guild = interaction.guild;
+  const staffBusyChannel = guild.channels.cache.get(CONFIG.STAFF_BUSY_CHANNEL_ID);
+  
+  if (!staffBusyChannel) {
+    await interaction.reply({ content: '❌ Canal de staff no disponible no configurado.', ephemeral: true });
+    return;
+  }
+  
+  try {
+    await interaction.member.voice.setChannel(staffBusyChannel);
+    
+    const embed = new EmbedBuilder()
+      .setColor('#FFA500')
+      .setTitle('☕ Descanso Programado')
+      .setDescription(`Has sido movido al canal de **Staff No Disponible**`)
+      .addFields(
+        { name: '⏱️ Duración', value: `${minutos} minuto(s)`, inline: true },
+        { name: '🔔 Recordatorio', value: `Recibirás un aviso cuando termine`, inline: true }
+      )
+      .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+      .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    
+    // Programar recordatorio
+    setTimeout(async () => {
+      try {
+        const reminderEmbed = new EmbedBuilder()
+          .setColor('#00FF00')
+          .setTitle('⏰ Fin del Descanso')
+          .setDescription(`Tu descanso de **${minutos} minuto(s)** ha terminado.\n\nPuedes volver al canal de Staff Disponible cuando estés listo.`)
+          .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+          .setTimestamp();
+        
+        await interaction.member.user.send({ embeds: [reminderEmbed] });
+      } catch (error) {
+        console.error('❌ Error enviando recordatorio:', error.message);
+      }
+    }, minutos * 60000);
+    
+    console.log(`☕ ${interaction.user.username} tomó descanso de ${minutos} minutos`);
+    
+  } catch (error) {
+    await interaction.reply({ content: '❌ Error al tomar descanso. Asegúrate de estar en un canal de voz.', ephemeral: true });
+  }
+}
+
+async function handleVolverCommand(interaction) {
+  if (!isStaff(interaction.member)) {
+    await interaction.reply({ content: '❌ Este comando es solo para staff.', ephemeral: true });
+    return;
+  }
+  
+  const guild = interaction.guild;
+  const staffAvailableChannel = guild.channels.cache.get(CONFIG.STAFF_AVAILABLE_CHANNEL_ID);
+  
+  if (!staffAvailableChannel) {
+    await interaction.reply({ content: '❌ Canal de staff disponible no configurado.', ephemeral: true });
+    return;
+  }
+  
+  try {
+    await interaction.member.voice.setChannel(staffAvailableChannel);
+    
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('✅ De Vuelta al Servicio')
+      .setDescription(`Has sido movido al canal de **Staff Disponible**\n\nEstás listo para atender usuarios.`)
+      .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+      .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    
+    // Cancelar temporizador si existe
+    cancelStaffUnavailableTimer(interaction.member.id);
+    
+    console.log(`✅ ${interaction.user.username} volvió al servicio`);
+    
+  } catch (error) {
+    await interaction.reply({ content: '❌ Error al volver. Asegúrate de estar en un canal de voz.', ephemeral: true });
+  }
+}
+
+async function handleEstadisticasCommand(interaction) {
+  if (!isStaff(interaction.member)) {
+    await interaction.reply({ content: '❌ Este comando es solo para staff.', ephemeral: true });
+    return;
+  }
+  
+  const guild = interaction.guild;
+  const availableStaff = getAvailableStaff(guild);
+  const activeSupports = botState.activeSupport.size;
+  const queueLength = botState.queue.length;
+  
+  const embed = new EmbedBuilder()
+    .setColor('#00BFFF')
+    .setTitle('📊 Estadísticas del Sistema')
+    .addFields(
+      { name: '👥 Usuarios en Cola', value: `${queueLength}`, inline: true },
+      { name: '👨‍💼 Staff Disponible', value: `${availableStaff.length}`, inline: true },
+      { name: '🔧 Soportes Activos', value: `${activeSupports}`, inline: true }
+    )
+    .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+    .setTimestamp();
+  
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+async function handleColaCommand(interaction) {
+  const queueLength = botState.queue.length;
+  
+  if (queueLength === 0) {
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('📭 Cola Vacía')
+      .setDescription('No hay usuarios esperando en este momento.')
+      .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+      .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return;
+  }
+  
+  const queueList = botState.queue.slice(0, 10).map((entry, index) => {
+    const waitTime = getWaitingTime(entry);
+    const priorityEmoji = entry.priority === 3 ? '👑' : entry.priority === 2 ? '⭐' : '🟢';
+    return `${priorityEmoji} **#${index + 1}** - ${entry.member.user.username} (${waitTime} min)`;
+  }).join('\n');
+  
+  const embed = new EmbedBuilder()
+    .setColor('#FFA500')
+    .setTitle('📋 Cola de Espera')
+    .setDescription(queueList)
+    .addFields(
+      { name: '👥 Total en Cola', value: `${queueLength}`, inline: true },
+      { name: '🎯 Próximo', value: botState.queue[0].member.user.username, inline: true }
+    )
+    .setFooter({ text: queueLength > 10 ? `Mostrando 10 de ${queueLength}` : 'El Patio RP - Sistema de Soporte' })
+    .setTimestamp();
+  
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+// ===============================
 // EVENTOS
 // ===============================
 
@@ -975,12 +1232,10 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   
   // MONITOREO DE STAFF NO DISPONIBLE
   if (isStaff(member)) {
-    // Entra a No Disponible
     if (newState.channelId === staffBusyId && oldState.channelId !== staffBusyId) {
       await startStaffUnavailableTimer(member, guild);
     }
     
-    // Sale de No Disponible
     if (oldState.channelId === staffBusyId && newState.channelId !== staffBusyId) {
       cancelStaffUnavailableTimer(member.id);
     }
@@ -992,16 +1247,10 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     
     const channel = newState.channel;
     
-    // Agregar a cola
     const entry = addToQueue(member);
-    
-    // Enviar DM
     await sendOrUpdateQueueDM(member);
-    
-    // Audio
     await manageWaitingChannelAudio(channel, member);
     
-    // Intentar asignar
     setTimeout(async () => {
       await assignUserToStaff(guild);
     }, CONFIG.TIME_BEFORE_ASSIGN);
@@ -1021,6 +1270,19 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     
     if (humans.size === 0) {
       disconnectFromChannel(channel);
+    } else {
+      // Si todavía hay usuarios, reiniciar la secuencia para el primer usuario
+      const firstUser = humans.first();
+      const isFirst = botState.isFirstPlay.get(channel.id);
+      
+      if (!isFirst) {
+        console.log(`🔄 Reiniciando secuencia para ${firstUser.user.username}`);
+        stopAllAudio(channel.id);
+        const connection = botState.activeConnections.get(channel.id);
+        if (connection) {
+          await startAudioSequence(connection, channel.id, firstUser);
+        }
+      }
     }
     
     await updateAllQueueMessages();
@@ -1035,7 +1297,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     const duration = Math.floor((Date.now() - supportInfo.startTime) / 60000);
     console.log(`⏱️ Duración: ${duration} minutos`);
     
-    // Enviar solicitud de evaluación
     const staffMember = guild.members.cache.get(supportInfo.staffId);
     if (staffMember) {
       await sendReviewRequest(member, staffMember, supportInfo.ticketId, duration);
@@ -1043,7 +1304,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     
     botState.activeSupport.delete(member.id);
     
-    // Mover staff de vuelta
     if (staffMember && staffMember.voice.channelId === supportInfo.channelId) {
       const staffChannel = guild.channels.cache.get(CONFIG.STAFF_AVAILABLE_CHANNEL_ID);
       if (staffChannel) {
@@ -1060,15 +1320,35 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   }
 });
 
-// ===============================
-// MANEJO DE INTERACCIONES (BOTONES)
-// ===============================
-
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('review:')) {
+      await handleReview(interaction);
+    }
+  }
   
-  if (interaction.customId.startsWith('review_')) {
-    await handleReview(interaction);
+  if (interaction.isChatInputCommand()) {
+    try {
+      switch (interaction.commandName) {
+        case 'descanso':
+          await handleDescansoCommand(interaction);
+          break;
+        case 'volver':
+          await handleVolverCommand(interaction);
+          break;
+        case 'estadisticas':
+          await handleEstadisticasCommand(interaction);
+          break;
+        case 'cola':
+          await handleColaCommand(interaction);
+          break;
+      }
+    } catch (error) {
+      console.error('❌ Error manejando comando:', error);
+      if (!interaction.replied) {
+        await interaction.reply({ content: '❌ Hubo un error ejecutando el comando.', ephemeral: true });
+      }
+    }
   }
 });
 
@@ -1078,11 +1358,27 @@ client.on('interactionCreate', async (interaction) => {
 
 client.once("ready", async () => {
   console.log(`\n╔════════════════════════════════════════╗`);
-  console.log(`║  ✅ EL PATIO RP - BOT V3.2 MEJORADO   ║`);
+  console.log(`║  ✅ EL PATIO RP - BOT V3.3 OPTIMIZADO ║`);
   console.log(`║  👤 ${client.user.tag.padEnd(31)}║`);
   console.log(`╚════════════════════════════════════════╝\n`);
   
   checkAudioFiles();
+  
+  // Registrar comandos slash
+  const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
+  
+  try {
+    console.log('🔄 Registrando comandos slash...');
+    
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands },
+    );
+    
+    console.log('✅ Comandos slash registrados');
+  } catch (error) {
+    console.error('❌ Error registrando comandos:', error);
+  }
   
   const guild = client.guilds.cache.first();
   
@@ -1111,9 +1407,10 @@ client.once("ready", async () => {
   
   console.log(`\n✅ Bot listo y operativo`);
   console.log(`📊 Canales soporte: ${CONFIG.SUPPORT_CHANNELS.length}`);
-  console.log(`🎵 Sistema de audio mejorado: ACTIVO`);
-  console.log(`⭐ Sistema de calificación: ACTIVO`);
-  console.log(`⚠️ Monitoreo de staff: ACTIVO\n`);
+  console.log(`🎵 Sistema de audio optimizado: ACTIVO`);
+  console.log(`⭐ Sistema de calificación: CORREGIDO`);
+  console.log(`⚠️ Monitoreo de staff: ACTIVO`);
+  console.log(`🎮 Comandos disponibles: /descanso, /volver, /estadisticas, /cola\n`);
 });
 
 // ===============================
@@ -1132,7 +1429,7 @@ client.on('error', error => {
 // LOGIN
 // ===============================
 
-console.log("🚀 Iniciando El Patio RP Bot V3.2 MEJORADO...\n");
+console.log("🚀 Iniciando El Patio RP Bot V3.3 OPTIMIZADO...\n");
 
 client.login(CONFIG.TOKEN).catch(err => {
   console.error("❌ Error login:", err);
