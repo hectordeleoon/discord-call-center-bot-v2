@@ -12,9 +12,10 @@ database/
 *.sqlite3
 
 # Archivos de audio (pueden ser grandes)
-audio/*.mp3
-audio/*.wav
-audio/*.ogg
+# audio/*.mp3     ← COMENTA O ELIMINA ESTA LÍNEA
+# audio/*.wav     ← COMENTA O ELIMINA ESTA LÍNEA
+# audio/*.ogg     ← COMENTA O ELIMINA ESTA LÍNEA
+
 # Mantener solo los archivos base
 !audio/waiting.mp3
 !audio/notification.mp3
@@ -47,3 +48,12 @@ tmp/
 # Backups
 backups/
 *.backup
+```
+
+3. **Verifica que tengas los archivos de audio en la carpeta `/audio`:**
+```
+audio/
+  ├── musica_espera.mp3
+  ├── voz_atendiendo.mp3
+  ├── voz_no_disponible.mp3
+  └── voz_vip.mp3
