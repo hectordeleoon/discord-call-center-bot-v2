@@ -29,11 +29,30 @@ const {
 
 const CONFIG = {
   TOKEN: process.env.DISCORD_BOT_TOKEN,
+
+  WAITING_CHANNEL_ID: process.env.WAITING_CHANNEL_ID,
   STAFF_AVAILABLE_CHANNEL_ID: process.env.STAFF_AVAILABLE_CHANNEL_ID,
   STAFF_BUSY_CHANNEL_ID: process.env.STAFF_BUSY_CHANNEL_ID,
-  WAITING_CHANNEL_ID: process.env.WAITING_CHANNEL_ID
-};
+  STAFF_TEXT_CHANNEL_ID: process.env.STAFF_TEXT_CHANNEL_ID,
 
+  SUPPORT_CHANNELS: process.env.SUPPORT_CHANNELS?.split(',').map(id => id.trim()) || [],
+
+  STAFF_ROLES: process.env.STAFF_ROLES?.split(',').map(id => id.trim()) || [],
+  VIP_ROLES: process.env.VIP_ROLES?.split(',').map(id => id.trim()) || [],
+  DONATOR_ROLES: process.env.DONATOR_ROLES?.split(',').map(id => id.trim()) || [],
+
+  AUDIO_FILES: {
+    BACKGROUND_MUSIC: "./audio/musica_espera.mp3",
+    VOICE_WAITING: "./audio/voz_atendiendo.mp3",
+    VOICE_NO_STAFF: "./audio/voz_no_disponible.mp3",
+    VOICE_VIP: "./audio/voz_vip.mp3"
+  },
+
+  VOICE_REPEAT_INTERVAL: parseInt(process.env.VOICE_REPEAT_INTERVAL) || 60000,
+  TIME_BEFORE_ASSIGN: parseInt(process.env.TIME_BEFORE_ASSIGN) || 5000,
+  QUEUE_UPDATE_INTERVAL: parseInt(process.env.QUEUE_UPDATE_INTERVAL) || 10000,
+
+  AVERAGE_SUPPORT_TIME: 3
 };
 
 client.login(CONFIG.TOKEN);
