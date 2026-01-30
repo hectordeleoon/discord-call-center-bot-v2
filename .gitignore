@@ -52,8 +52,10 @@ backups/
 
 3. **Verifica que tengas los archivos de audio en la carpeta `/audio`:**
 ```
-audio/
-  ├── musica_espera.mp3
-  ├── voz_atendiendo.mp3
-  ├── voz_no_disponible.mp3
-  └── voz_vip.mp3
+AUDIO_FILES: {
+  BACKGROUND_MUSIC: "./audio/waiting.mp3",
+  VOICE_WAITING: "./audio/notification.mp3",
+  VOICE_NO_STAFF: "./audio/notification.mp3",
+  VOICE_VIP: "./audio/notification.mp3"
+}
+
