@@ -42,10 +42,10 @@ const CONFIG = {
   DONATOR_ROLES: process.env.DONATOR_ROLES?.split(',').map(id => id.trim()) || [],
 
   AUDIO_FILES: {
-    BACKGROUND_MUSIC: "./audio/musica_espera.mp3",
-    VOICE_WAITING: "./audio/voz_atendiendo.mp3",
-    VOICE_NO_STAFF: "./audio/voz_no_disponible.mp3",
-    VOICE_VIP: "./audio/voz_vip.mp3"
+    BACKGROUND_MUSIC: "./musica_espera.mp3",
+    VOICE_WAITING: "./voz_atendiendo.mp3",
+    VOICE_NO_STAFF: "./voz_no_disponible.mp3",
+    VOICE_VIP: "./voz_vip.mp3"
   },
 
   VOICE_REPEAT_INTERVAL: parseInt(process.env.VOICE_REPEAT_INTERVAL) || 60000,
