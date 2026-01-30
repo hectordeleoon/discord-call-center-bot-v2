@@ -1,0 +1,29 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source code
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Audio files (mark as binary)
+*.mp3 binary
+*.wav binary
+*.ogg binary
+
+# Database files (mark as binary)
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Archives
+*.zip binary
+*.tar binary
+*.gz binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

@@ -1,0 +1,49 @@
+# Dependencias
+node_modules/
+package-lock.json
+
+# Variables de entorno (¡IMPORTANTE!)
+.env
+
+# Base de datos SQLite
+database/
+*.db
+*.sqlite
+*.sqlite3
+
+# Archivos de audio (pueden ser grandes)
+audio/*.mp3
+audio/*.wav
+audio/*.ogg
+# Mantener solo los archivos base
+!audio/waiting.mp3
+!audio/notification.mp3
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sistema Operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Archivos temporales
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Backups
+backups/
+*.backup
