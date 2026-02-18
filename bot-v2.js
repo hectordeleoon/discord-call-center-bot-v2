@@ -53,13 +53,12 @@ const CONFIG = {
     VOICE_VIP: "./voz_vip.mp3"
   },
 
-  // 🎯 CONFIGURACIÓN OPTIMIZADA TIPO CALL CENTER PROFESIONAL
-  MUSIC_INTRO: 8000,                  // 8 segundos música de bienvenida
-  MUSIC_BETWEEN_VOICES: 15000,        // 15 segundos música entre voces
-  MUSIC_CYCLE_BASE: 25000,            // 25 segundos base para ciclos
-  MUSIC_CYCLE_INCREMENT: 8000,        // Incremento de 8 segundos
-  MAX_MUSIC_DURATION: 50000,          // Máximo 50 segundos de música
-  TRANSITION_BUFFER: 600,             // 0.6 segundos de buffer
+  MUSIC_INTRO: 8000,
+  MUSIC_BETWEEN_VOICES: 15000,
+  MUSIC_CYCLE_BASE: 25000,
+  MUSIC_CYCLE_INCREMENT: 8000,
+  MAX_MUSIC_DURATION: 50000,
+  TRANSITION_BUFFER: 600,
   
   TIME_BEFORE_ASSIGN: 5000,
   QUEUE_UPDATE_INTERVAL: 10000,
@@ -181,6 +180,24 @@ function generateTicketId() {
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ===============================
+// 🛡️ HELPER: Enviar DM de forma segura (no crashea si el usuario lo tiene bloqueado)
+// ===============================
+
+async function sendDMSafe(user, options) {
+  try {
+    const dmChannel = await user.createDM();
+    return await dmChannel.send(options);
+  } catch (error) {
+    if (error.code === 50007 || error.message?.includes('Cannot send messages to this user')) {
+      console.log(`⚠️ No se pudo enviar DM a ${user.username} (DMs bloqueados o cerrados), continuando...`);
+    } else {
+      console.error(`❌ Error enviando DM a ${user.username}:`, error.message);
+    }
+    return null;
+  }
 }
 
 // ===============================
@@ -323,25 +340,30 @@ async function sendOrUpdateQueueDM(member) {
       .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
       .setTimestamp();
     
-    const dmChannel = await member.user.createDM();
     const existingDM = botState.userDMMessages.get(member.id);
     
     if (existingDM) {
       try {
+        const dmChannel = await member.user.createDM();
         const existingMessage = await dmChannel.messages.fetch(existingDM.messageId);
         await existingMessage.edit({ embeds: [embed] });
       } catch (error) {
-        const newMessage = await dmChannel.send({ embeds: [embed] });
-        botState.userDMMessages.set(member.id, { messageId: newMessage.id, channelId: dmChannel.id });
+        // Si no se puede editar, intentar enviar nuevo DM
+        const newMessage = await sendDMSafe(member.user, { embeds: [embed] });
+        if (newMessage) {
+          botState.userDMMessages.set(member.id, { messageId: newMessage.id, channelId: newMessage.channelId });
+        }
       }
     } else {
-      const message = await dmChannel.send({ embeds: [embed] });
-      botState.userDMMessages.set(member.id, { messageId: message.id, channelId: dmChannel.id });
-      console.log(`📬 DM enviado a ${member.user.username}`);
+      const message = await sendDMSafe(member.user, { embeds: [embed] });
+      if (message) {
+        botState.userDMMessages.set(member.id, { messageId: message.id, channelId: message.channelId });
+        console.log(`📬 DM enviado a ${member.user.username}`);
+      }
     }
     
   } catch (error) {
-    console.error(`❌ Error enviando DM:`, error.message);
+    console.error(`❌ Error en sendOrUpdateQueueDM (${member.user.username}):`, error.message);
   }
 }
 
@@ -393,10 +415,10 @@ async function sendReviewRequest(member, staffMember, ticketId, duration) {
           .setStyle(ButtonStyle.Danger)
       );
     
-    const dmChannel = await member.user.createDM();
-    await dmChannel.send({ embeds: [embed], components: [row] });
-    
-    console.log(`⭐ Solicitud de evaluación enviada a ${member.user.username}`);
+    const sent = await sendDMSafe(member.user, { embeds: [embed], components: [row] });
+    if (sent) {
+      console.log(`⭐ Solicitud de evaluación enviada a ${member.user.username}`);
+    }
     
   } catch (error) {
     console.error('❌ Error enviando solicitud de evaluación:', error.message);
@@ -582,36 +604,24 @@ async function startCallCenterSequence(connection, channelId, member) {
 
     botState.cycleCounters.set(channelId, 0);
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎵 PASO 1: Música de Bienvenida (8 segundos)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`📻 [PASO 1] Música de Bienvenida (8s)`);
     await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.35, "🎵 Música Intro");
     await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎙️ PASO 2: Primera Voz (Atendiendo)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`📻 [PASO 2] Voz: "Estamos atendiendo su llamada..."`);
     await playAudio(connection, channelId, CONFIG.AUDIO_FILES.VOICE_WAITING, 1.0, "🎙️ Voz Atendiendo");
     await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎵 PASO 3: Música Intermedia (15 segundos)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`📻 [PASO 3] Música de Espera (15s)`);
     await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.28, "🎵 Música Espera");
     await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎙️ PASO 4: Voz VIP/Donador o Normal
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let roleVoice = CONFIG.AUDIO_FILES.VOICE_WAITING;
     let roleDesc = "Normal";
     
@@ -629,9 +639,6 @@ async function startCallCenterSequence(connection, channelId, member) {
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🔍 PASO 5: Verificar Staff y Voz de No Disponible
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const channel = client.channels.cache.get(channelId);
     const availableStaff = getAvailableStaff(channel.guild);
     
@@ -646,9 +653,6 @@ async function startCallCenterSequence(connection, channelId, member) {
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🔄 PASO 6: Iniciar Ciclo Continuo
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`📻 [PASO 6] 🔄 Iniciando ciclo continuo...\n`);
     await startMusicVoiceCycle(connection, channelId);
 
@@ -658,7 +662,7 @@ async function startCallCenterSequence(connection, channelId, member) {
 }
 
 // ===============================
-// 🔄 CICLO CONTINUO: Música → Voz → Música → Voz...
+// 🔄 CICLO CONTINUO
 // ===============================
 
 async function startMusicVoiceCycle(connection, channelId) {
@@ -668,7 +672,6 @@ async function startMusicVoiceCycle(connection, channelId) {
     const currentCycle = (botState.cycleCounters.get(channelId) || 0) + 1;
     botState.cycleCounters.set(channelId, currentCycle);
     
-    // Calcular duración de música (incrementa progresivamente)
     let musicDuration = CONFIG.MUSIC_CYCLE_BASE + ((currentCycle - 1) * CONFIG.MUSIC_CYCLE_INCREMENT);
     if (musicDuration > CONFIG.MAX_MUSIC_DURATION) {
       musicDuration = CONFIG.MAX_MUSIC_DURATION;
@@ -678,18 +681,12 @@ async function startMusicVoiceCycle(connection, channelId) {
     console.log(`│  🔄 CICLO #${currentCycle} - MÚSICA + VOZ       │`);
     console.log(`└─────────────────────────────────────┘`);
     
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎵 Reproducir Música
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`🎵 Reproduciendo música (${musicDuration / 1000}s)...`);
     await playAudio(connection, channelId, CONFIG.AUDIO_FILES.WELCOME_MUSIC, 0.25, "🎵 Música Ciclo");
     await wait(CONFIG.TRANSITION_BUFFER);
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🎙️ Reproducir Voz Apropiada
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const channel = client.channels.cache.get(channelId);
     if (!channel) return;
     
@@ -700,12 +697,10 @@ async function startMusicVoiceCycle(connection, channelId) {
     let voiceFile = CONFIG.AUDIO_FILES.VOICE_WAITING;
     let voiceDesc = "Atendiendo";
     
-    // Verificar sin staff primero
     if (availableStaff.length === 0) {
       voiceFile = CONFIG.AUDIO_FILES.VOICE_NO_STAFF;
       voiceDesc = "Sin Staff Disponible ⚠️";
     } else {
-      // Verificar VIP/Donador
       for (const [id, member] of humans) {
         if (isVIP(member)) {
           voiceFile = CONFIG.AUDIO_FILES.VOICE_VIP;
@@ -725,9 +720,6 @@ async function startMusicVoiceCycle(connection, channelId) {
 
     if (!await checkChannelHasUsers(channelId)) return;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🔄 Continuar con el Siguiente Ciclo
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`✅ Ciclo #${currentCycle} completado. Próximo ciclo en 2s...`);
     await wait(2000);
     
@@ -908,7 +900,7 @@ async function assignUserToStaff(guild) {
         await msg.edit({ embeds: [embed] });
         
       } catch (error) {
-        console.error('❌ Error actualizando DM:', error.message);
+        console.log(`⚠️ No se pudo actualizar DM de ${nextUser.member.user.username}, continuando...`);
       }
       
       botState.userDMMessages.delete(nextUser.userId);
@@ -996,11 +988,9 @@ async function notifyStaffUnavailable(member, guild) {
       .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
       .setTimestamp();
     
-    try {
-      await member.user.send({ embeds: [dmEmbed] });
+    const sent = await sendDMSafe(member.user, { embeds: [dmEmbed] });
+    if (sent) {
       console.log(`📧 Notificación enviada a ${member.user.username}`);
-    } catch (error) {
-      console.error(`❌ Error enviando DM:`, error.message);
     }
     
   } catch (error) {
@@ -1069,18 +1059,14 @@ async function handleDescansoCommand(interaction) {
     await interaction.reply({ embeds: [embed], ephemeral: true });
     
     setTimeout(async () => {
-      try {
-        const reminderEmbed = new EmbedBuilder()
-          .setColor('#00FF00')
-          .setTitle('⏰ Fin del Descanso')
-          .setDescription(`Tu descanso de **${minutos} minuto(s)** ha terminado.`)
-          .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
-          .setTimestamp();
-        
-        await interaction.member.user.send({ embeds: [reminderEmbed] });
-      } catch (error) {
-        console.error('❌ Error enviando recordatorio:', error.message);
-      }
+      const reminderEmbed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('⏰ Fin del Descanso')
+        .setDescription(`Tu descanso de **${minutos} minuto(s)** ha terminado.`)
+        .setFooter({ text: 'El Patio RP - Sistema de Soporte' })
+        .setTimestamp();
+      
+      await sendDMSafe(interaction.member.user, { embeds: [reminderEmbed] });
     }, minutos * 60000);
     
     console.log(`☕ ${interaction.user.username} tomó descanso de ${minutos} minutos`);
