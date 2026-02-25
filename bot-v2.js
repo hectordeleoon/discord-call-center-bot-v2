@@ -62,8 +62,8 @@ const CONFIG = {
   QUEUE_UPDATE_INTERVAL: 10000,
   NO_STAFF_WARNING_TIME: 180000,
   STAFF_UNAVAILABLE_WARNING_TIME: 1800000,
-  USER_QUEUE_TIMEOUT: 600000,      // 10 min sin staff → sacar de cola
-  ANTI_SPAM_COOLDOWN: 15000,       // 15s entre re-entradas al canal
+  USER_QUEUE_TIMEOUT: 600000,
+  ANTI_SPAM_COOLDOWN: 15000,
 
   AVERAGE_SUPPORT_TIME: 3,
   DATA_FILE: "./data.json"
@@ -101,17 +101,17 @@ const persistData = loadData();
 const botState = {
   activeConnections: new Map(),
   currentPlayers: new Map(),
-  cycleRunning: new Map(),          // Controla while-loops de audio
+  cycleRunning: new Map(),
 
   queue: [],
   activeSupport: new Map(),
   userDMMessages: new Map(),
 
-  lastStaffNotification: new Map(), // Por guild
+  lastStaffNotification: new Map(),
   staffUnavailableTimers: new Map(),
   noStaffWarnings: new Map(),
-  queueTimeouts: new Map(),         // Timeout automático de cola
-  antiSpamMap: new Map(),           // Anti-spam por usuario
+  queueTimeouts: new Map(),
+  antiSpamMap: new Map(),
 };
 
 // ===============================
@@ -133,7 +133,7 @@ const client = new Client({
 // ===============================
 
 const app = express();
-app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V5.0 PRO MAX"));
+app.get("/", (req, res) => res.send("✅ El Patio RP - Call Center V5.1 AUDIO FIX"));
 app.get("/stats", (req, res) => res.json({
   queue: botState.queue.length,
   activeSupport: botState.activeSupport.size,
@@ -191,7 +191,7 @@ const getWaitingTime  = e  => Math.floor((Date.now() - e.joinTime) / 60000);
 const getEstimatedTime = p => Math.max(1, p * CONFIG.AVERAGE_SUPPORT_TIME);
 
 // ===============================
-// 🛡️ SEND DM SEGURO
+// SEND DM SEGURO
 // ===============================
 
 async function sendDMSafe(user, options) {
@@ -237,10 +237,8 @@ function addToQueue(member) {
 
   console.log(`📋 ${member.user.username} en cola (Ticket: ${ticketId}, Prioridad: ${priority})`);
 
-  // Advertencia por espera larga
   botState.noStaffWarnings.set(member.id, setTimeout(() => sendNoStaffWarning(member.guild, entry), CONFIG.NO_STAFF_WARNING_TIME));
 
-  // Timeout automático: remover de cola si lleva demasiado tiempo
   botState.queueTimeouts.set(member.id, setTimeout(async () => {
     if (!botState.queue.find(e => e.userId === member.id)) return;
     console.log(`⏰ Timeout de cola para ${member.user.username}`);
@@ -390,7 +388,6 @@ async function handleReview(interaction) {
     const staffMember = await guild.members.fetch(staffId).catch(() => null);
     if (!staffMember) { await interaction.editReply({ content: '❌ Staff no encontrado.' }); return; }
 
-    // Guardar estadísticas
     if (!persistData.staffStats[staffId]) {
       persistData.staffStats[staffId] = { totalReviews: 0, totalStars: 0, username: staffMember.user.username };
     }
@@ -426,18 +423,73 @@ async function handleReview(interaction) {
 }
 
 // ===============================
-// 🎵 AUDIO
+// 🎵 AUDIO - SISTEMA CORREGIDO
 // ===============================
+
+// Diagnóstico del sistema de audio
+async function diagnoseAudioSystem() {
+  console.log('\n🔧 Diagnóstico del sistema de audio:');
+
+  // Verificar ffmpeg-static
+  try {
+    const ffmpegPath = require('ffmpeg-static');
+    if (ffmpegPath) {
+      console.log(`✅ ffmpeg-static: ${ffmpegPath}`);
+    } else {
+      console.log('⚠️  ffmpeg-static retornó null (normal en algunos entornos)');
+    }
+  } catch {
+    console.log('❌ ffmpeg-static NO instalado — npm install ffmpeg-static');
+  }
+
+  // Verificar codec opus
+  try {
+    require('@discordjs/opus');
+    console.log('✅ @discordjs/opus: OK');
+  } catch {
+    try {
+      require('opusscript');
+      console.log('✅ opusscript: OK (alternativa)');
+    } catch {
+      console.log('❌ Sin codec Opus — npm install @discordjs/opus');
+    }
+  }
+
+  // Verificar archivos
+  for (const [key, filePath] of Object.entries(CONFIG.AUDIO_FILES)) {
+    if (fs.existsSync(filePath)) {
+      const size = fs.statSync(filePath).size;
+      console.log(`✅ ${key}: ${filePath} (${Math.round(size/1024)} KB)`);
+    } else {
+      console.log(`❌ ${key}: NO ENCONTRADO → ${filePath}`);
+    }
+  }
+  console.log('');
+}
 
 function checkAudioFiles() {
   console.log("\n🔍 Verificando archivos de audio...");
   let ok = true;
   for (const [key, filePath] of Object.entries(CONFIG.AUDIO_FILES)) {
-    const exists = fs.existsSync(filePath);
-    console.log(`${exists ? '✅' : '❌'} ${key}: ${filePath}`);
-    if (!exists) ok = false;
+    try {
+      const exists = fs.existsSync(filePath);
+      if (exists) {
+        const stats = fs.statSync(filePath);
+        const sizeKB = Math.round(stats.size / 1024);
+        console.log(`✅ ${key}: ${filePath} (${sizeKB} KB)`);
+        if (stats.size < 1000) {
+          console.warn(`⚠️  ${key} parece muy pequeño (${stats.size} bytes)`);
+        }
+      } else {
+        console.log(`❌ ${key}: ${filePath} — NO ENCONTRADO`);
+        ok = false;
+      }
+    } catch (e) {
+      console.error(`❌ ${key}: ${e.message}`);
+      ok = false;
+    }
   }
-  console.log("");
+  console.log(ok ? "✅ Todos los archivos OK\n" : "❌ Faltan archivos de audio\n");
   return ok;
 }
 
@@ -470,47 +522,90 @@ async function connectToVoiceChannel(channel) {
   }
 }
 
+// ─── FUNCIÓN CENTRAL CORREGIDA ───
 async function playAudio(connection, channelId, audioFile, volume = 1.0, description = "Audio") {
   return new Promise((resolve) => {
     try {
+      // Validar existencia
       if (!fs.existsSync(audioFile)) {
         console.error(`❌ Archivo no encontrado: ${audioFile}`);
-        resolve(); return;
+        resolve();
+        return;
       }
-      console.log(`🔊 Reproduciendo ${description}: ${path.basename(audioFile)} (Vol: ${Math.round(volume*100)}%)`);
+
+      // Validar tamaño mínimo (evita "offset is out of bounds" con archivos vacíos/corruptos)
+      const stats = fs.statSync(audioFile);
+      if (stats.size < 1000) {
+        console.error(`❌ Archivo corrupto o vacío: ${audioFile} (${stats.size} bytes)`);
+        resolve();
+        return;
+      }
+
+      console.log(`🔊 Reproduciendo ${description}: ${path.basename(audioFile)} (${Math.round(stats.size/1024)}KB, Vol: ${Math.round(volume*100)}%)`);
 
       const player = createAudioPlayer();
-      const resource = createAudioResource(audioFile, { inlineVolume: true, inputType: StreamType.Arbitrary });
-      resource.volume.setVolume(volume);
+
+      // ✅ FIX PRINCIPAL: usar ruta absoluta + inlineVolume separado del stream
+      const absolutePath = path.resolve(audioFile);
+      const resource = createAudioResource(absolutePath, {
+        inputType: StreamType.Arbitrary,
+        inlineVolume: true,
+      });
+
+      if (!resource) {
+        console.error(`❌ createAudioResource retornó null para: ${audioFile}`);
+        resolve();
+        return;
+      }
+
+      // Setear volumen después de crear el resource
+      if (resource.volume) {
+        resource.volume.setVolume(Math.max(0, Math.min(2, volume)));
+      }
+
       connection.subscribe(player);
       botState.currentPlayers.set(channelId, player);
-      player.play(resource);
+
+      // Timeout de seguridad: si el audio tarda más de 10 min algo está mal
+      const safetyTimeout = setTimeout(() => {
+        console.warn(`⚠️ Timeout de seguridad para ${description}`);
+        try { player.stop(true); } catch (_) {}
+        resolve();
+      }, 600000);
+
+      player.on('error', err => {
+        clearTimeout(safetyTimeout);
+        console.error(`❌ Error en player "${description}": ${err.message}`);
+        botState.currentPlayers.delete(channelId);
+        try { player.stop(true); } catch (_) {}
+        resolve();
+      });
 
       player.on(AudioPlayerStatus.Idle, () => {
+        clearTimeout(safetyTimeout);
         console.log(`✅ ${description} finalizado`);
         botState.currentPlayers.delete(channelId);
         resolve();
       });
-      player.on('error', err => {
-        console.error(`❌ Error en ${description}:`, err.message);
-        botState.currentPlayers.delete(channelId);
-        resolve();
-      });
+
+      player.play(resource);
+
     } catch (err) {
-      console.error(`❌ Error reproduciendo:`, err.message);
-      resolve();
+      console.error(`❌ Error crítico en playAudio "${description}":`, err.message);
+      botState.currentPlayers.delete(channelId);
+      resolve(); // Nunca dejar la promesa colgada
     }
   });
 }
 
 // ===============================
-// 🎼 SECUENCIA INICIAL
+// SECUENCIA INICIAL
 // ===============================
 
 async function startCallCenterSequence(connection, channelId, member) {
   try {
     console.log(`\n╔════════════════════════════════════════════════╗`);
-    console.log(`║  🎼 INICIANDO SECUENCIA CALL CENTER PROFESIONAL ║`);
+    console.log(`║  🎼 INICIANDO SECUENCIA CALL CENTER            ║`);
     console.log(`║  👤 Usuario: ${member.user.username.padEnd(30)}║`);
     console.log(`╚════════════════════════════════════════════════╝\n`);
 
@@ -530,7 +625,7 @@ async function startCallCenterSequence(connection, channelId, member) {
     if (!await checkChannelHasUsers(channelId)) return;
 
     let roleVoice = CONFIG.AUDIO_FILES.VOICE_WAITING, roleDesc = "Normal";
-    if (isVIP(member))     { roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP; roleDesc = "VIP 👑"; }
+    if (isVIP(member))          { roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP; roleDesc = "VIP 👑"; }
     else if (isDonator(member)) { roleVoice = CONFIG.AUDIO_FILES.VOICE_VIP; roleDesc = "Donador ⭐"; }
 
     console.log(`📻 [PASO 4] Voz Rol: ${roleDesc}`);
@@ -558,7 +653,7 @@ async function startCallCenterSequence(connection, channelId, member) {
 }
 
 // ===============================
-// 🔄 CICLO CONTINUO (while loop - sin recursión)
+// CICLO CONTINUO
 // ===============================
 
 async function startMusicVoiceCycle(connection, channelId) {
@@ -611,7 +706,7 @@ async function startMusicVoiceCycle(connection, channelId) {
 }
 
 // ===============================
-// 🛑 DETENER / DESCONECTAR
+// DETENER / DESCONECTAR
 // ===============================
 
 function stopAllAudio(channelId) {
@@ -695,7 +790,6 @@ async function assignUserToStaff(guild) {
     });
     removeFromQueue(nextUser.userId);
 
-    // Guardar en historial
     persistData.ticketHistory.unshift({
       ticketId: nextUser.ticketId, userId: nextUser.userId,
       username: nextUser.member.user.username, staffId: staff.id,
@@ -705,7 +799,6 @@ async function assignUserToStaff(guild) {
     if (persistData.ticketHistory.length > 500) persistData.ticketHistory = persistData.ticketHistory.slice(0, 500);
     saveData();
 
-    // Actualizar DM
     const dmInfo = botState.userDMMessages.get(nextUser.userId);
     if (dmInfo) {
       try {
@@ -731,7 +824,7 @@ async function assignUserToStaff(guild) {
 }
 
 // ===============================
-// MONITOREO STAFF NO DISPONIBLE
+// MONITOREO STAFF
 // ===============================
 
 function cancelStaffUnavailableTimer(memberId) {
@@ -921,17 +1014,14 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   const waitingId = CONFIG.WAITING_CHANNEL_ID;
   const staffBusyId = CONFIG.STAFF_BUSY_CHANNEL_ID;
 
-  // Staff descanso
   if (isStaff(member)) {
     if (newState.channelId === staffBusyId && oldState.channelId !== staffBusyId) await startStaffUnavailableTimer(member);
     if (oldState.channelId === staffBusyId && newState.channelId !== staffBusyId) cancelStaffUnavailableTimer(member.id);
   }
 
-  // Entró a espera
   if (newState.channelId === waitingId && oldState.channelId !== waitingId) {
     console.log(`\n📥 ${member.user.username} entró a espera`);
 
-    // Anti-spam
     if (isSpamming(member.id)) {
       console.log(`🚫 Anti-spam: ${member.user.username}`);
       try {
@@ -951,7 +1041,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     }
   }
 
-  // Salió de espera
   if (oldState.channelId === waitingId && newState.channelId !== waitingId) {
     console.log(`\n📤 ${member.user.username} salió de espera`);
     removeFromQueue(member.id);
@@ -966,7 +1055,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     await updateAllQueueMessages();
   }
 
-  // Terminó soporte
   const supportInfo = botState.activeSupport.get(member.id);
   if (supportInfo && oldState.channelId === supportInfo.channelId && newState.channelId !== supportInfo.channelId) {
     console.log(`\n✅ ${member.user.username} terminó soporte`);
@@ -1016,15 +1104,17 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ===============================
-// BOT LISTO (clientReady - fix deprecation)
+// BOT LISTO
 // ===============================
 
 client.once("clientReady", async () => {
   console.log(`\n╔════════════════════════════════════════════════╗`);
-  console.log(`║  ✅ EL PATIO RP - CALL CENTER V5.0 PRO MAX    ║`);
+  console.log(`║  ✅ EL PATIO RP - CALL CENTER V5.1 AUDIO FIX  ║`);
   console.log(`║  👤 ${client.user.tag.padEnd(37)}║`);
   console.log(`╚════════════════════════════════════════════════╝\n`);
 
+  // Ejecutar diagnóstico de audio al arrancar
+  await diagnoseAudioSystem();
   checkAudioFiles();
 
   const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
@@ -1034,7 +1124,6 @@ client.once("clientReady", async () => {
     console.log('✅ Comandos slash registrados\n');
   } catch (err) { console.error('❌ Error registrando comandos:', err); }
 
-  // Inicializar cada guild (multi-servidor)
   for (const [, guild] of client.guilds.cache) {
     console.log(`🏠 Inicializando: ${guild.name}`);
     startQueueUpdater(guild);
@@ -1051,16 +1140,11 @@ client.once("clientReady", async () => {
   }
 
   console.log(`\n╔════════════════════════════════════════════════╗`);
-  console.log(`║  ✅ BOT LISTO - V5.0 PRO MAX                   ║`);
-  console.log(`║  🔄 While Loop (sin recursión): ✅             ║`);
-  console.log(`║  🏠 Multi-Servidor: ✅                         ║`);
-  console.log(`║  💾 Persistencia JSON: ✅                      ║`);
-  console.log(`║  🚫 Anti-Spam: ✅                              ║`);
-  console.log(`║  ⏰ Timeout de Cola: ✅                        ║`);
-  console.log(`║  📋 Historial de Tickets: ✅                   ║`);
-  console.log(`║  ⭐ Estadísticas por Staff: ✅                 ║`);
-  console.log(`║  🎮 /ticket /misresenas /historial: ✅         ║`);
-  console.log(`║  🔕 Fix deprecation warning: ✅               ║`);
+  console.log(`║  ✅ BOT LISTO - V5.1 AUDIO FIX                ║`);
+  console.log(`║  🔧 path.resolve() fix: ✅                    ║`);
+  console.log(`║  🔧 Validación tamaño archivo: ✅             ║`);
+  console.log(`║  🔧 Safety timeout: ✅                        ║`);
+  console.log(`║  🔧 Diagnóstico al arrancar: ✅               ║`);
   console.log(`╚════════════════════════════════════════════════╝\n`);
 });
 
@@ -1069,12 +1153,12 @@ client.once("clientReady", async () => {
 // ===============================
 
 process.on('unhandledRejection', err => console.error('\n❌ UNHANDLED:', err?.message || err));
-process.on('uncaughtException', err => console.error('\n❌ UNCAUGHT:', err?.message || err));
+process.on('uncaughtException',  err => console.error('\n❌ UNCAUGHT:', err?.message || err));
 client.on('error', err => console.error('\n❌ CLIENT ERROR:', err?.message || err));
 
 // ===============================
 // LOGIN
 // ===============================
 
-console.log("🚀 Iniciando El Patio RP Call Center V5.0 PRO MAX...\n");
+console.log("🚀 Iniciando El Patio RP Call Center V5.1 AUDIO FIX...\n");
 client.login(CONFIG.TOKEN).catch(err => { console.error("❌ Error de login:", err); process.exit(1); });
